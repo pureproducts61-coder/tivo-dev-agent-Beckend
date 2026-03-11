@@ -24,6 +24,8 @@ jobs:
         env:
           VITE_HF_TOKEN: ${{ secrets.HF_TOKEN }}
           VITE_HF_MODEL: ${{ vars.HF_MODEL || 'mistralai/Mistral-7B-Instruct-v0.3' }}
+          VITE_SUPABASE_URL: ${{ secrets.VITE_SUPABASE_URL }}
+          VITE_SUPABASE_PUBLISHABLE_KEY: ${{ secrets.VITE_SUPABASE_PUBLISHABLE_KEY }}
         run: npm run build
 
       - name: Deploy to HF Space
@@ -31,59 +33,52 @@ jobs:
           HF_TOKEN: ${{ secrets.HF_TOKEN }}
           HF_SPACE: ${{ secrets.HF_SPACE }}
         run: |
-          # Install git-lfs
           sudo apt-get install -y git-lfs
           git lfs install
 
-          # Clone the HF Space repo
           git clone https://huggingface:${HF_TOKEN}@huggingface.co/spaces/${HF_SPACE} hf-space
 
-          # Copy built files + Dockerfile
           rm -rf hf-space/*
           cp -r dist/* hf-space/
-          
-          # Create a simple Dockerfile for static hosting on HF
-          cat > hf-space/Dockerfile <<'EOF'
-          FROM nginx:alpine
-          COPY . /usr/share/nginx/html
-          COPY nginx.conf /etc/nginx/conf.d/default.conf
-          EXPOSE 7860
-          EOF
 
-          # Create nginx config for SPA routing
-          cat > hf-space/nginx.conf <<'EOF'
-          server {
-              listen 7860;
-              root /usr/share/nginx/html;
-              index index.html;
-              
-              location / {
-                  try_files $uri $uri/ /index.html;
-              }
-              
-              location ~* \.(js|css|png|jpg|jpeg|gif|ico|svg|woff|woff2|ttf|eot)$ {
-                  expires 1y;
-                  add_header Cache-Control "public, immutable";
-              }
-          }
-          EOF
+          cat > hf-space/Dockerfile << 'DOCKERFILE'
+FROM nginx:alpine
+COPY . /usr/share/nginx/html
+COPY nginx.conf /etc/nginx/conf.d/default.conf
+EXPOSE 7860
+DOCKERFILE
 
-          # Create HF Space metadata
-          cat > hf-space/README.md <<'EOF'
-          ---
-          title: Raz Dev
-          emoji: 🤖
-          colorFrom: green
-          colorTo: gray
-          sdk: docker
-          app_port: 7860
-          pinned: false
-          ---
-          
-          # Raz Dev - AI Coding Assistant
-          EOF
+          cat > hf-space/nginx.conf << 'NGINXCONF'
+server {
+    listen 7860;
+    root /usr/share/nginx/html;
+    index index.html;
 
-          # Push to HF
+    location / {
+        try_files $uri $uri/ /index.html;
+    }
+
+    location ~* \.(js|css|png|jpg|jpeg|gif|ico|svg|woff|woff2|ttf|eot)$ {
+        expires 1y;
+        add_header Cache-Control "public, immutable";
+    }
+}
+NGINXCONF
+
+          cat > hf-space/README.md << 'README'
+---
+title: Raz Dev
+emoji: 🤖
+colorFrom: green
+colorTo: gray
+sdk: docker
+app_port: 7860
+pinned: false
+---
+
+# Raz Dev - AI Coding Assistant
+README
+
           cd hf-space
           git config user.email "github-actions@github.com"
           git config user.name "GitHub Actions"
