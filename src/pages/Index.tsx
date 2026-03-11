@@ -15,7 +15,7 @@ const Index = () => {
   const [input, setInput] = useState("");
   const [isLoading, setIsLoading] = useState(false);
   const [conversationId, setConversationId] = useState<string | null>(null);
-  const [sidebarOpen, setSidebarOpen] = useState(true);
+  const [sidebarOpen, setSidebarOpen] = useState(false);
   const scrollEndRef = useRef<HTMLDivElement>(null);
   const { toast } = useToast();
   const { user } = useAuth();
@@ -72,14 +72,12 @@ const Index = () => {
     setInput("");
     setIsLoading(true);
 
-    // Create or use existing conversation
     let convId = conversationId;
     if (!convId) {
       convId = await createConversation(text);
       setConversationId(convId);
     }
 
-    // Save user message
     if (convId) await saveMessage(convId, "user", text);
 
     let assistantSoFar = "";
@@ -101,10 +99,8 @@ const Index = () => {
       onDelta: upsert,
       onDone: async () => {
         setIsLoading(false);
-        // Save assistant message
         if (convId && assistantSoFar) {
           await saveMessage(convId, "assistant", assistantSoFar);
-          // Update conversation timestamp
           await supabase
             .from("conversations")
             .update({ updated_at: new Date().toISOString() })
@@ -127,14 +123,27 @@ const Index = () => {
 
   return (
     <div className="flex h-screen bg-background">
-      {/* Sidebar */}
+      {/* Mobile overlay */}
       {sidebarOpen && (
+        <div
+          className="fixed inset-0 bg-black/50 z-40 md:hidden"
+          onClick={() => setSidebarOpen(false)}
+        />
+      )}
+
+      {/* Sidebar */}
+      <div
+        className={`fixed inset-y-0 left-0 z-50 md:relative md:z-auto transition-transform duration-200 ${
+          sidebarOpen ? "translate-x-0" : "-translate-x-full md:translate-x-0 md:hidden"
+        }`}
+      >
         <ChatSidebar
           currentConversationId={conversationId}
           onSelectConversation={loadConversation}
           onNewConversation={handleNewConversation}
+          onClose={() => setSidebarOpen(false)}
         />
-      )}
+      </div>
 
       {/* Main Chat Area */}
       <div className="flex flex-col flex-1 min-w-0">
@@ -168,6 +177,22 @@ const Index = () => {
               <p className="text-sm text-muted-foreground text-center max-w-md">
                 আমাকে আপনার প্রজেক্ট নিয়ে বলুন। কোড লেখা, বাগ ফিক্স, বা ডিপ্লয়মেন্ট — সব কাজে আমি সাহায্য করতে পারি।
               </p>
+              <div className="grid grid-cols-1 sm:grid-cols-2 gap-2 mt-4 w-full max-w-md">
+                {[
+                  "একটি React প্রজেক্ট সেটআপ করে দাও",
+                  "Python দিয়ে API বানাতে সাহায্য করো",
+                  "আমার কোডে বাগ আছে, ফিক্স করো",
+                  "Git/GitHub শিখতে চাই",
+                ].map((suggestion) => (
+                  <button
+                    key={suggestion}
+                    onClick={() => setInput(suggestion)}
+                    className="text-left text-xs px-3 py-2 rounded-lg border border-border bg-card hover:bg-secondary transition-colors text-muted-foreground hover:text-foreground"
+                  >
+                    {suggestion}
+                  </button>
+                ))}
+              </div>
             </div>
           ) : (
             <div className="max-w-3xl mx-auto">
@@ -185,7 +210,7 @@ const Index = () => {
         </ScrollArea>
 
         {/* Input */}
-        <div className="border-t border-border bg-card/40 backdrop-blur-sm p-4">
+        <div className="border-t border-border bg-card/40 backdrop-blur-sm p-3 sm:p-4">
           <div className="max-w-3xl mx-auto flex gap-2">
             <Textarea
               value={input}

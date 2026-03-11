@@ -1,5 +1,5 @@
 import { useState, useEffect } from "react";
-import { Plus, MessageSquare, Trash2, LogOut } from "lucide-react";
+import { Plus, MessageSquare, Trash2, LogOut, X } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { ScrollArea } from "@/components/ui/scroll-area";
 import { supabase } from "@/integrations/supabase/client";
@@ -15,12 +15,14 @@ interface ChatSidebarProps {
   currentConversationId: string | null;
   onSelectConversation: (id: string) => void;
   onNewConversation: () => void;
+  onClose?: () => void;
 }
 
 const ChatSidebar = ({
   currentConversationId,
   onSelectConversation,
   onNewConversation,
+  onClose,
 }: ChatSidebarProps) => {
   const [conversations, setConversations] = useState<Conversation[]>([]);
   const { user, signOut } = useAuth();
@@ -46,19 +48,27 @@ const ChatSidebar = ({
   };
 
   return (
-    <div className="flex flex-col h-full w-64 bg-card border-r border-border">
-      <div className="p-3 border-b border-border">
+    <div className="flex flex-col h-full w-64 bg-card border-r border-border shrink-0">
+      <div className="p-3 border-b border-border flex items-center gap-2">
         <Button
           onClick={onNewConversation}
           variant="outline"
-          className="w-full justify-start gap-2 text-sm"
+          className="flex-1 justify-start gap-2 text-sm"
         >
           <Plus className="h-4 w-4" /> নতুন চ্যাট
         </Button>
+        {onClose && (
+          <Button variant="ghost" size="icon" className="h-8 w-8 md:hidden" onClick={onClose}>
+            <X className="h-4 w-4" />
+          </Button>
+        )}
       </div>
 
       <ScrollArea className="flex-1">
         <div className="p-2 space-y-1">
+          {conversations.length === 0 && (
+            <p className="text-xs text-muted-foreground text-center py-8">কোনো চ্যাট নেই</p>
+          )}
           {conversations.map((conv) => (
             <div
               key={conv.id}
@@ -67,7 +77,10 @@ const ChatSidebar = ({
                   ? "bg-primary/15 text-primary"
                   : "text-muted-foreground hover:bg-secondary"
               }`}
-              onClick={() => onSelectConversation(conv.id)}
+              onClick={() => {
+                onSelectConversation(conv.id);
+                onClose?.();
+              }}
             >
               <MessageSquare className="h-4 w-4 shrink-0" />
               <span className="truncate flex-1">{conv.title}</span>
@@ -85,7 +98,10 @@ const ChatSidebar = ({
         </div>
       </ScrollArea>
 
-      <div className="p-3 border-t border-border">
+      <div className="p-3 border-t border-border space-y-1">
+        <p className="text-[10px] text-muted-foreground truncate px-2">
+          {user?.email}
+        </p>
         <Button
           onClick={signOut}
           variant="ghost"
