@@ -1,6 +1,8 @@
 import { Bot, User, Copy, Check } from "lucide-react";
 import { useState } from "react";
+// @ts-ignore
 import ReactMarkdown from "react-markdown";
+// @ts-ignore
 import remarkGfm from "remark-gfm";
 
 interface ChatMessageProps {
