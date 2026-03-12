@@ -1,1 +1,4 @@
 project_id = "zequmbllknxbswnwkgjv"
+
+[functions.backend-api]
+verify_jwt = false
