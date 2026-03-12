@@ -38,6 +38,30 @@ export type Database = {
         }
         Relationships: []
       }
+      memory_logs: {
+        Row: {
+          action: string
+          created_at: string
+          details: Json | null
+          id: string
+          user_id: string | null
+        }
+        Insert: {
+          action: string
+          created_at?: string
+          details?: Json | null
+          id?: string
+          user_id?: string | null
+        }
+        Update: {
+          action?: string
+          created_at?: string
+          details?: Json | null
+          id?: string
+          user_id?: string | null
+        }
+        Relationships: []
+      }
       messages: {
         Row: {
           content: string
@@ -73,23 +97,98 @@ export type Database = {
           },
         ]
       }
+      payments: {
+        Row: {
+          admin_note: string | null
+          amount: number
+          created_at: string
+          id: string
+          payment_method: string
+          reviewed_at: string | null
+          status: string
+          transaction_id: string
+          user_id: string
+        }
+        Insert: {
+          admin_note?: string | null
+          amount?: number
+          created_at?: string
+          id?: string
+          payment_method?: string
+          reviewed_at?: string | null
+          status?: string
+          transaction_id: string
+          user_id: string
+        }
+        Update: {
+          admin_note?: string | null
+          amount?: number
+          created_at?: string
+          id?: string
+          payment_method?: string
+          reviewed_at?: string | null
+          status?: string
+          transaction_id?: string
+          user_id?: string
+        }
+        Relationships: []
+      }
       profiles: {
         Row: {
           created_at: string
+          credits: number
           display_name: string | null
           id: string
+          is_blocked: boolean
           user_id: string
         }
         Insert: {
           created_at?: string
+          credits?: number
           display_name?: string | null
           id?: string
+          is_blocked?: boolean
           user_id: string
         }
         Update: {
           created_at?: string
+          credits?: number
           display_name?: string | null
           id?: string
+          is_blocked?: boolean
+          user_id?: string
+        }
+        Relationships: []
+      }
+      projects: {
+        Row: {
+          created_at: string
+          description: string | null
+          id: string
+          name: string
+          repo_url: string | null
+          status: string
+          updated_at: string
+          user_id: string
+        }
+        Insert: {
+          created_at?: string
+          description?: string | null
+          id?: string
+          name: string
+          repo_url?: string | null
+          status?: string
+          updated_at?: string
+          user_id: string
+        }
+        Update: {
+          created_at?: string
+          description?: string | null
+          id?: string
+          name?: string
+          repo_url?: string | null
+          status?: string
+          updated_at?: string
           user_id?: string
         }
         Relationships: []
