@@ -2,3 +2,12 @@ project_id = "zequmbllknxbswnwkgjv"
 
 [functions.backend-api]
 verify_jwt = false
+
+[functions.ai-engine]
+verify_jwt = false
+
+[functions.project-manager]
+verify_jwt = false
+
+[functions.sandbox]
+verify_jwt = false
