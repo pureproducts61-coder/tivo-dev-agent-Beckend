@@ -162,30 +162,42 @@ export type Database = {
       }
       projects: {
         Row: {
+          build_status: string | null
           created_at: string
           description: string | null
+          files: Json | null
           id: string
+          last_build_log: string | null
           name: string
+          public_url: string | null
           repo_url: string | null
           status: string
           updated_at: string
           user_id: string
         }
         Insert: {
+          build_status?: string | null
           created_at?: string
           description?: string | null
+          files?: Json | null
           id?: string
+          last_build_log?: string | null
           name: string
+          public_url?: string | null
           repo_url?: string | null
           status?: string
           updated_at?: string
           user_id: string
         }
         Update: {
+          build_status?: string | null
           created_at?: string
           description?: string | null
+          files?: Json | null
           id?: string
+          last_build_log?: string | null
           name?: string
+          public_url?: string | null
           repo_url?: string | null
           status?: string
           updated_at?: string
