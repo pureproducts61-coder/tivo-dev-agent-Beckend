@@ -173,6 +173,13 @@ const AdminDashboard = () => {
             <form onSubmit={handleLogin} className="space-y-4">
               <Input placeholder="Admin Email" type="email" value={email} onChange={(e) => setEmail(e.target.value)} required />
               <Input placeholder="Password" type="password" value={password} onChange={(e) => setPassword(e.target.value)} required />
+              <Input
+                placeholder="Master Secret"
+                type="password"
+                value={masterSecret}
+                onChange={(e) => setMasterSecret(e.target.value)}
+                required
+              />
               <Button type="submit" className="w-full" disabled={loading}>
                 {loading ? "Logging in..." : "Admin Login"}
               </Button>
