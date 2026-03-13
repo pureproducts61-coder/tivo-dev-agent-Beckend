@@ -25,19 +25,15 @@ const PublicStatus = () => {
     nextHour.setMinutes(60, 0, 0);
     const delayMs = Math.max(1000, nextHour.getTime() - now.getTime());
 
-    const timeout = window.setTimeout(() => {
+    let intervalId: number | undefined;
+    const timeoutId = window.setTimeout(() => {
       syncNotice();
-      const interval = window.setInterval(syncNotice, 60 * 60 * 1000);
-      (window as any).__tivo_notice_interval = interval;
+      intervalId = window.setInterval(syncNotice, 60 * 60 * 1000);
     }, delayMs);
 
     return () => {
-      window.clearTimeout(timeout);
-      const interval = (window as any).__tivo_notice_interval;
-      if (interval) {
-        window.clearInterval(interval);
-        delete (window as any).__tivo_notice_interval;
-      }
+      window.clearTimeout(timeoutId);
+      if (intervalId) window.clearInterval(intervalId);
     };
   }, []);
 
