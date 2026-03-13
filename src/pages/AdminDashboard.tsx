@@ -21,6 +21,7 @@ const AdminDashboard = () => {
   const [admin, setAdmin] = useState<AdminState>({ authenticated: false, token: "" });
   const [email, setEmail] = useState("");
   const [password, setPassword] = useState("");
+  const [masterSecret, setMasterSecret] = useState("");
   const [loading, setLoading] = useState(false);
   const { toast } = useToast();
 
@@ -57,20 +58,25 @@ const AdminDashboard = () => {
     setRefreshing(false);
   }, [admin, toast]);
 
-  useEffect(() => { fetchAll(); }, [fetchAll]);
+  useEffect(() => {
+    fetchAll();
+  }, [fetchAll]);
 
   const handleLogin = async (e: React.FormEvent) => {
     e.preventDefault();
+    if (!masterSecret.trim()) {
+      toast({ title: "Master Secret দরকার", description: "লগইনের জন্য Master Secret দিন", variant: "destructive" });
+      return;
+    }
+
     setLoading(true);
     try {
       const data = await backendFetch("admin-login", {
         method: "POST",
         body: { email, password },
-        masterSecret: "temp",
+        masterSecret: masterSecret.trim(),
       });
-      // Admin login uses master secret internally, but we need the actual secret
-      // The token returned IS the master secret for subsequent calls
-      setAdmin({ authenticated: true, token: data.token });
+      setAdmin({ authenticated: true, token: data.token || masterSecret.trim() });
       toast({ title: "Admin Login সফল!" });
     } catch (e: any) {
       toast({ title: "Login ব্যর্থ", description: e.message, variant: "destructive" });
@@ -167,6 +173,13 @@ const AdminDashboard = () => {
             <form onSubmit={handleLogin} className="space-y-4">
               <Input placeholder="Admin Email" type="email" value={email} onChange={(e) => setEmail(e.target.value)} required />
               <Input placeholder="Password" type="password" value={password} onChange={(e) => setPassword(e.target.value)} required />
+              <Input
+                placeholder="Master Secret"
+                type="password"
+                value={masterSecret}
+                onChange={(e) => setMasterSecret(e.target.value)}
+                required
+              />
               <Button type="submit" className="w-full" disabled={loading}>
                 {loading ? "Logging in..." : "Admin Login"}
               </Button>
