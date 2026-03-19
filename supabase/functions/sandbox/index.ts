@@ -21,7 +21,7 @@ function getSupabaseAdmin() {
   );
 }
 
-async function callAI(messages: any[]) {
+async function callAI(messages: any[], model = "google/gemini-3-flash-preview") {
   const LOVABLE_API_KEY = Deno.env.get("LOVABLE_API_KEY");
   if (!LOVABLE_API_KEY) throw new Error("LOVABLE_API_KEY not configured");
 
@@ -31,21 +31,19 @@ async function callAI(messages: any[]) {
       Authorization: `Bearer ${LOVABLE_API_KEY}`,
       "Content-Type": "application/json",
     },
-    body: JSON.stringify({
-      model: "google/gemini-3-flash-preview",
-      messages,
-    }),
+    body: JSON.stringify({ model, messages }),
   });
 
-  if (!response.ok) {
-    const status = response.status;
-    if (status === 429) throw new Error("Rate limited");
-    if (status === 402) throw new Error("AI credits exhausted");
-    throw new Error(`AI gateway error: ${status}`);
-  }
-
+  if (!response.ok) throw new Error(`AI gateway error: ${response.status}`);
   const data = await response.json();
   return data.choices?.[0]?.message?.content || "";
+}
+
+function parseJsonFromAI(result: string) {
+  try {
+    const m = result.match(/```json\s*([\s\S]*?)\s*```/) || result.match(/\{[\s\S]*\}/);
+    return JSON.parse(m ? (m[1] || m[0]) : result);
+  } catch { return null; }
 }
 
 serve(async (req) => {
@@ -66,7 +64,7 @@ serve(async (req) => {
     const body = await req.json().catch(() => ({}));
     const supabase = getSupabaseAdmin();
 
-    // === VALIDATE CODE (Static Analysis) ===
+    // === VALIDATE CODE ===
     if (action === "validate") {
       const { code, language, rules } = body;
       if (!code) return jsonResponse({ error: "code required" }, 400);
@@ -74,38 +72,17 @@ serve(async (req) => {
       const result = await callAI([
         {
           role: "system",
-          content: `You are TIVO AI OS Code Validator. Analyze code for:
-1. Syntax errors
-2. Type errors
-3. Logic bugs
-4. Security vulnerabilities
-5. Performance issues
-${rules ? `Custom rules: ${rules}` : ""}
-${language ? `Language: ${language}` : ""}
-
-Return JSON:
-{
-  "valid": boolean,
-  "score": 0-100,
-  "errors": [{"line": number, "type": "error|warning|info", "message": "string", "fix": "string"}],
-  "summary": "string"
-}`,
+          content: `Code Validator. Analyze for syntax errors, type errors, logic bugs, security issues, performance.
+${rules ? `Custom rules: ${rules}` : ""} ${language ? `Language: ${language}` : ""}
+Return JSON: {"valid":boolean,"score":0-100,"errors":[{"line":0,"type":"error|warning","message":"string","fix":"string"}],"summary":"string"}`,
         },
         { role: "user", content: code },
       ]);
 
-      let parsed;
-      try {
-        const jsonMatch = result.match(/```json\s*([\s\S]*?)\s*```/) || result.match(/\{[\s\S]*\}/);
-        parsed = JSON.parse(jsonMatch ? (jsonMatch[1] || jsonMatch[0]) : result);
-      } catch {
-        parsed = { valid: true, score: 50, errors: [], summary: result };
-      }
-
-      return jsonResponse({ success: true, validation: parsed });
+      return jsonResponse({ success: true, validation: parseJsonFromAI(result) || { valid: true, score: 50, summary: result } });
     }
 
-    // === TEST GENERATION ===
+    // === GENERATE TESTS ===
     if (action === "generate-tests") {
       const { code, language, framework, test_framework } = body;
       if (!code) return jsonResponse({ error: "code required" }, 400);
@@ -113,17 +90,8 @@ Return JSON:
       const result = await callAI([
         {
           role: "system",
-          content: `You are TIVO AI OS Test Generator. Generate comprehensive test cases.
-${language ? `Language: ${language}` : ""}
-${framework ? `Framework: ${framework}` : ""}
-${test_framework ? `Test framework: ${test_framework}` : "Use the standard test framework for the language."}
-
-Generate:
-1. Unit tests for every function
-2. Edge case tests
-3. Error handling tests
-4. Integration tests if applicable
-
+          content: `Test Generator. Generate comprehensive unit tests, edge case tests, error handling tests.
+${language ? `Language: ${language}` : ""} ${framework ? `Framework: ${framework}` : ""} ${test_framework ? `Test framework: ${test_framework}` : ""}
 Return complete, runnable test files.`,
         },
         { role: "user", content: code },
@@ -135,62 +103,34 @@ Return complete, runnable test files.`,
     // === FULL PROJECT AUDIT ===
     if (action === "audit") {
       const { files, project_id } = body;
-
       let projectFiles = files;
       if (!projectFiles && project_id) {
-        // Fetch files from storage
         const { data: project } = await supabase.from("projects").select("files").eq("id", project_id).single();
         projectFiles = project?.files || [];
       }
-
       if (!projectFiles?.length) return jsonResponse({ error: "files or project_id required" }, 400);
 
-      const filesSummary = projectFiles.map((f: any) =>
-        typeof f === "string" ? f : `File: ${f.path}\n${f.content || "(stored in storage)"}`
-      ).join("\n---\n");
+      const summary = projectFiles.map((f: any) => `--- ${f.path} ---\n${f.content || "(in storage)"}`).join("\n\n");
 
       const result = await callAI([
         {
           role: "system",
-          content: `You are TIVO AI OS Project Auditor. Perform a complete project audit:
-
-1. **Code Quality Score** (0-100)
-2. **Security Audit** - XSS, injection, auth issues
-3. **Performance Audit** - bundle size, rendering, memory
-4. **Accessibility Audit** - ARIA, semantic HTML, contrast
-5. **SEO Audit** - meta tags, structure
-6. **Dependency Check** - outdated or vulnerable packages
-7. **Architecture Review** - patterns, separation of concerns
-
-Return JSON:
-{
-  "overall_score": 0-100,
-  "security": {"score": 0-100, "issues": []},
-  "performance": {"score": 0-100, "issues": []},
-  "accessibility": {"score": 0-100, "issues": []},
-  "seo": {"score": 0-100, "issues": []},
-  "code_quality": {"score": 0-100, "issues": []},
-  "recommendations": ["string"],
-  "critical_fixes": ["string"]
-}`,
+          content: `Project Auditor. Audit:
+1. Code Quality (0-100) 2. Security 3. Performance 4. Accessibility 5. SEO 6. Architecture
+Return JSON: {"overall_score":0-100,"security":{"score":0-100,"issues":[]},"performance":{"score":0-100,"issues":[]},"code_quality":{"score":0-100,"issues":[]},"recommendations":[],"critical_fixes":[]}`,
         },
-        { role: "user", content: filesSummary },
-      ]);
+        { role: "user", content: summary },
+      ], "google/gemini-2.5-pro");
 
-      let parsed;
-      try {
-        const jsonMatch = result.match(/```json\s*([\s\S]*?)\s*```/) || result.match(/\{[\s\S]*\}/);
-        parsed = JSON.parse(jsonMatch ? (jsonMatch[1] || jsonMatch[0]) : result);
-      } catch {
-        parsed = { raw_audit: result };
-      }
-
-      // Log audit
+      const audit = parseJsonFromAI(result) || { raw_audit: result };
       if (project_id) {
-        await supabase.from("projects").update({ build_status: "audited", last_build_log: JSON.stringify(parsed).slice(0, 5000) }).eq("id", project_id);
+        await supabase.from("projects").update({
+          build_status: "audited",
+          last_build_log: JSON.stringify(audit).slice(0, 5000),
+        }).eq("id", project_id);
       }
 
-      return jsonResponse({ success: true, audit: parsed });
+      return jsonResponse({ success: true, audit });
     }
 
     // === OPTIMIZE CODE ===
@@ -201,23 +141,8 @@ Return JSON:
       const result = await callAI([
         {
           role: "system",
-          content: `You are TIVO AI OS Code Optimizer.
-${language ? `Language: ${language}` : ""}
-${focus ? `Optimization focus: ${focus}` : "Optimize for performance, readability, and best practices."}
-
-Return the optimized code with explanations of changes.
-Format:
-**Changes Made:**
-1. ...
-2. ...
-
-**Optimized Code:**
-\`\`\`
-...
-\`\`\`
-
-**Performance Impact:**
-...`,
+          content: `Code Optimizer. ${language ? `Language: ${language}` : ""} ${focus ? `Focus: ${focus}` : "Optimize for performance and readability."}
+Return optimized code with explanations.`,
         },
         { role: "user", content: code },
       ]);
@@ -225,39 +150,91 @@ Format:
       return jsonResponse({ success: true, optimized: result });
     }
 
-    // === EXECUTE COMMAND (General Purpose) ===
+    // === AUTO TEST & FIX PIPELINE ===
+    if (action === "auto-test-fix") {
+      const { code, language, project_id, max_iterations } = body;
+      if (!code && !project_id) return jsonResponse({ error: "code or project_id required" }, 400);
+
+      let currentCode = code;
+      if (!currentCode && project_id) {
+        const { data: project } = await supabase.from("projects").select("files").eq("id", project_id).single();
+        const files = (project?.files as any[]) || [];
+        currentCode = files.map((f: any) => `--- ${f.path} ---\n${f.content}`).join("\n\n");
+      }
+
+      const iterations = [];
+      const maxIter = Math.min(max_iterations || 3, 5);
+
+      for (let i = 0; i < maxIter; i++) {
+        // Step 1: Find bugs
+        const bugResult = await callAI([
+          {
+            role: "system",
+            content: `Find ALL bugs, errors, and issues in this code. ${language ? `Language: ${language}` : ""}
+Return JSON: {"has_issues":boolean,"issues":[{"severity":"critical|high|medium|low","description":"string","location":"string"}]}
+If no issues, set has_issues to false.`,
+          },
+          { role: "user", content: currentCode },
+        ]);
+
+        const bugs = parseJsonFromAI(bugResult);
+        if (!bugs?.has_issues) {
+          iterations.push({ iteration: i + 1, status: "clean", message: "No issues found" });
+          break;
+        }
+
+        // Step 2: Fix all bugs
+        const fixResult = await callAI([
+          {
+            role: "system",
+            content: `Fix ALL these issues in the code. Return ONLY the complete fixed code, nothing else.
+Issues: ${JSON.stringify(bugs.issues)}`,
+          },
+          { role: "user", content: currentCode },
+        ], "google/gemini-2.5-pro");
+
+        currentCode = fixResult;
+        iterations.push({
+          iteration: i + 1,
+          status: "fixed",
+          issues_found: bugs.issues?.length || 0,
+          issues: bugs.issues,
+        });
+      }
+
+      // Update project if project_id provided
+      if (project_id && currentCode) {
+        await supabase.from("projects").update({
+          last_build_log: JSON.stringify({ iterations }).slice(0, 5000),
+          build_status: "tested",
+        }).eq("id", project_id);
+      }
+
+      return jsonResponse({
+        success: true,
+        fixed_code: currentCode,
+        iterations,
+        total_iterations: iterations.length,
+        final_status: iterations[iterations.length - 1]?.status || "unknown",
+      });
+    }
+
+    // === EXECUTE COMMAND ===
     if (action === "execute") {
-      const { command, params, user_id } = body;
+      const { command, params } = body;
       if (!command) return jsonResponse({ error: "command required" }, 400);
 
-      // Route to appropriate handler
       const result = await callAI([
         {
           role: "system",
-          content: `You are TIVO AI OS Command Executor. You receive commands from TIVO AI OS and execute them.
-The command is: "${command}"
-Parameters: ${JSON.stringify(params || {})}
-
-Process this command and return a structured response.
-If the command involves code generation, generation complete code.
-If it involves analysis, provide detailed analysis.
-If it involves planning, create an actionable plan.
-Always return JSON with: { "status": "success|error", "result": any, "message": "string" }`,
+          content: `Command Executor for TIVO AI OS. Command: "${command}", Params: ${JSON.stringify(params || {})}
+Process and return JSON: {"status":"success|error","result":any,"message":"string"}`,
         },
-        { role: "user", content: `Execute: ${command}\nParams: ${JSON.stringify(params || {})}` },
+        { role: "user", content: `Execute: ${command}` },
       ]);
 
-      let parsed;
-      try {
-        const jsonMatch = result.match(/```json\s*([\s\S]*?)\s*```/) || result.match(/\{[\s\S]*\}/);
-        parsed = JSON.parse(jsonMatch ? (jsonMatch[1] || jsonMatch[0]) : result);
-      } catch {
-        parsed = { status: "success", result, message: "Command executed" };
-      }
-
-      // Log command
+      const parsed = parseJsonFromAI(result) || { status: "success", result, message: "Executed" };
       await supabase.from("memory_logs").insert({
-        user_id: user_id || null,
         action: "command_executed",
         details: { command, params, result_preview: JSON.stringify(parsed).slice(0, 500) },
       });
