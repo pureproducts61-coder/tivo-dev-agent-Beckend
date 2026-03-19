@@ -14,11 +14,13 @@ function jsonResponse(data: any, status = 200) {
   });
 }
 
-function getSupabaseAdmin() {
-  return createClient(
-    Deno.env.get("SUPABASE_URL")!,
-    Deno.env.get("SUPABASE_SERVICE_ROLE_KEY")!
-  );
+function checkSupabaseConnection() {
+  const url = Deno.env.get("SUPABASE_URL");
+  const key = Deno.env.get("SUPABASE_SERVICE_ROLE_KEY");
+  if (!url || !key) {
+    throw new Error("CONNECTION_ERROR: SUPABASE_URL or SUPABASE_SERVICE_ROLE_KEY missing. System cannot operate.");
+  }
+  return createClient(url, key);
 }
 
 serve(async (req) => {
@@ -33,18 +35,55 @@ serve(async (req) => {
 
     // Health check — no auth needed
     if (action === "health") {
-      const supabase = getSupabaseAdmin();
-      let dbStatus = "disconnected";
+      let dbStatus = "unknown";
+      let storageStatus = "unknown";
       try {
-        const { error } = await supabase.from("profiles").select("id").limit(1);
+        const supabase = checkSupabaseConnection();
+        const { error } = await supabase.from("projects").select("id").limit(1);
         dbStatus = error ? `error: ${error.message}` : "connected";
-      } catch { dbStatus = "error"; }
+        const { error: storageErr } = await supabase.storage.from("project-files").list("", { limit: 1 });
+        storageStatus = storageErr ? `error: ${storageErr.message}` : "connected";
+      } catch (e) {
+        dbStatus = "disconnected";
+        storageStatus = "disconnected";
+      }
+
       return jsonResponse({
-        status: "online",
-        service: "TIVO AI OS Backend Engine",
-        version: "2.0.0",
+        status: dbStatus === "connected" ? "online" : "degraded",
+        service: "TIVO AI OS — Autonomous Software Factory",
+        version: "3.0.0",
         database: dbStatus,
-        endpoints: ["ai-engine", "project-manager", "sandbox", "backend-api"],
+        storage: storageStatus,
+        ai_gateway: Deno.env.get("LOVABLE_API_KEY") ? "configured" : "missing",
+        master_secret: Deno.env.get("MASTER_SECRET") ? "configured" : "missing",
+        capabilities: [
+          "ai-engine/generate — AI code generation",
+          "ai-engine/generate-project — Multi-file project generation",
+          "ai-engine/review — Code review",
+          "ai-engine/fix — Bug fixing",
+          "ai-engine/chat — General AI chat",
+          "ai-engine/auto-build — Full autonomous build pipeline",
+          "project-manager/create — Create project",
+          "project-manager/list — List projects",
+          "project-manager/get — Get project details",
+          "project-manager/update — Update project",
+          "project-manager/delete — Delete project",
+          "project-manager/upload-files — Upload files",
+          "project-manager/publish — Publish project",
+          "project-manager/download — Download ready-to-run bundle",
+          "project-manager/versions — Version history",
+          "sandbox/validate — Code validation",
+          "sandbox/generate-tests — Test generation",
+          "sandbox/audit — Full project audit",
+          "sandbox/optimize — Code optimization",
+          "sandbox/visual-audit — AI visual UI audit",
+          "sandbox/auto-test-fix — Iterative bug fix pipeline",
+          "sandbox/factory — Full autonomous factory pipeline",
+          "sandbox/execute — Command execution",
+          "backend-api/stats — System stats",
+          "backend-api/logs — Memory logs",
+          "backend-api/log — Create log entry",
+        ],
         timestamp: new Date().toISOString(),
       });
     }
@@ -56,99 +95,22 @@ serve(async (req) => {
       return jsonResponse({ error: "Unauthorized" }, 401);
     }
 
-    const supabase = getSupabaseAdmin();
+    let supabase: any;
+    try {
+      supabase = checkSupabaseConnection();
+    } catch (connErr) {
+      return jsonResponse({ error: connErr instanceof Error ? connErr.message : "Connection Error", alert: "ADMIN_CONNECTION_ERROR" }, 503);
+    }
+
     const body = req.method !== "GET" ? await req.json().catch(() => ({})) : {};
-
-    // === USER MANAGEMENT ===
-    if (action === "users" && req.method === "GET") {
-      const email = url.searchParams.get("email");
-      let query = supabase.from("profiles").select("*");
-      if (email) {
-        const { data: authUsers } = await supabase.auth.admin.listUsers();
-        const ids = authUsers?.users?.filter((u: any) => u.email?.includes(email)).map((u: any) => u.id) || [];
-        if (!ids.length) return jsonResponse({ users: [] });
-        query = query.in("user_id", ids);
-      }
-      const { data, error } = await query.order("created_at", { ascending: false });
-      if (error) return jsonResponse({ error: error.message }, 500);
-
-      const { data: authUsers } = await supabase.auth.admin.listUsers();
-      const emailMap: Record<string, string> = {};
-      authUsers?.users?.forEach((u: any) => { emailMap[u.id] = u.email || ""; });
-      const users = (data || []).map((p: any) => ({ ...p, email: emailMap[p.user_id] || "unknown" }));
-      return jsonResponse({ users });
-    }
-
-    // === ADD/DEDUCT CREDITS ===
-    if (action === "add-credits" && req.method === "POST") {
-      const { user_id, credits } = body;
-      if (!user_id || !credits) return jsonResponse({ error: "user_id and credits required" }, 400);
-      const { data: profile } = await supabase.from("profiles").select("credits").eq("user_id", user_id).single();
-      const newCredits = (profile?.credits || 0) + credits;
-      await supabase.from("profiles").update({ credits: newCredits }).eq("user_id", user_id);
-      return jsonResponse({ success: true, credits: newCredits });
-    }
-
-    if (action === "deduct-credits" && req.method === "POST") {
-      const { user_id, amount, reason } = body;
-      if (!user_id || !amount) return jsonResponse({ error: "user_id and amount required" }, 400);
-      const { data: profile } = await supabase.from("profiles").select("credits, is_blocked").eq("user_id", user_id).single();
-      if (!profile) return jsonResponse({ error: "User not found" }, 404);
-      if (profile.is_blocked) return jsonResponse({ error: "Account blocked" }, 403);
-      if (profile.credits < amount) return jsonResponse({ error: "Insufficient credits", credits: profile.credits }, 402);
-      const newCredits = profile.credits - amount;
-      await supabase.from("profiles").update({ credits: newCredits }).eq("user_id", user_id);
-      await supabase.from("memory_logs").insert({ user_id, action: "credits_deducted", details: { amount, reason, remaining: newCredits } });
-      return jsonResponse({ success: true, credits: newCredits });
-    }
-
-    // === BLOCK/UNBLOCK USER ===
-    if (action === "block-user" && req.method === "POST") {
-      const { user_id, blocked } = body;
-      if (!user_id) return jsonResponse({ error: "user_id required" }, 400);
-      await supabase.from("profiles").update({ is_blocked: blocked ?? true }).eq("user_id", user_id);
-      return jsonResponse({ success: true });
-    }
-
-    // === PAYMENTS ===
-    if (action === "payments" && req.method === "GET") {
-      const status = url.searchParams.get("status") || "pending";
-      const { data, error } = await supabase.from("payments").select("*").eq("status", status).order("created_at", { ascending: false });
-      if (error) return jsonResponse({ error: error.message }, 500);
-      return jsonResponse({ payments: data });
-    }
-
-    if (action === "approve-payment" && req.method === "POST") {
-      const { payment_id, credits, admin_note } = body;
-      if (!payment_id) return jsonResponse({ error: "payment_id required" }, 400);
-      const { data: payment } = await supabase.from("payments").select("*").eq("id", payment_id).single();
-      if (!payment) return jsonResponse({ error: "Payment not found" }, 404);
-      await supabase.from("payments").update({ status: "approved", admin_note: admin_note || "", reviewed_at: new Date().toISOString() }).eq("id", payment_id);
-      if (credits) {
-        const { data: profile } = await supabase.from("profiles").select("credits").eq("user_id", payment.user_id).single();
-        await supabase.from("profiles").update({ credits: (profile?.credits || 0) + credits }).eq("user_id", payment.user_id);
-      }
-      return jsonResponse({ success: true });
-    }
-
-    if (action === "reject-payment" && req.method === "POST") {
-      const { payment_id, admin_note } = body;
-      await supabase.from("payments").update({ status: "rejected", admin_note: admin_note || "", reviewed_at: new Date().toISOString() }).eq("id", payment_id);
-      return jsonResponse({ success: true });
-    }
-
-    if (action === "submit-payment" && req.method === "POST") {
-      const { user_id, amount, transaction_id, payment_method } = body;
-      if (!user_id || !transaction_id) return jsonResponse({ error: "user_id and transaction_id required" }, 400);
-      const { error } = await supabase.from("payments").insert({ user_id, amount: amount || 0, transaction_id, payment_method: payment_method || "bkash" });
-      if (error) return jsonResponse({ error: error.message }, 500);
-      return jsonResponse({ success: true });
-    }
 
     // === MEMORY LOGS ===
     if (action === "logs" && req.method === "GET") {
       const limit = parseInt(url.searchParams.get("limit") || "50");
-      const { data, error } = await supabase.from("memory_logs").select("*").order("created_at", { ascending: false }).limit(limit);
+      const actionFilter = url.searchParams.get("action");
+      let query = supabase.from("memory_logs").select("*").order("created_at", { ascending: false }).limit(limit);
+      if (actionFilter) query = query.eq("action", actionFilter);
+      const { data, error } = await query;
       if (error) return jsonResponse({ error: error.message }, 500);
       return jsonResponse({ logs: data });
     }
@@ -161,18 +123,35 @@ serve(async (req) => {
 
     // === STATS ===
     if (action === "stats") {
-      const [profiles, payments, projects, logs] = await Promise.all([
-        supabase.from("profiles").select("id", { count: "exact", head: true }),
-        supabase.from("payments").select("id", { count: "exact", head: true }).eq("status", "pending"),
+      const [projects, logs, liveProjects] = await Promise.all([
         supabase.from("projects").select("id", { count: "exact", head: true }),
         supabase.from("memory_logs").select("id", { count: "exact", head: true }),
+        supabase.from("projects").select("id", { count: "exact", head: true }).eq("build_status", "live"),
       ]);
       return jsonResponse({
-        total_users: profiles.count || 0,
-        pending_payments: payments.count || 0,
         total_projects: projects.count || 0,
+        live_projects: liveProjects.count || 0,
         total_logs: logs.count || 0,
       });
+    }
+
+    // === SYSTEM CONNECTION CHECK ===
+    if (action === "check-connection") {
+      const checks: any = {};
+
+      // DB check
+      const { error: dbErr } = await supabase.from("projects").select("id").limit(1);
+      checks.database = dbErr ? { status: "error", message: dbErr.message } : { status: "ok" };
+
+      // Storage check
+      const { error: stErr } = await supabase.storage.from("project-files").list("", { limit: 1 });
+      checks.storage = stErr ? { status: "error", message: stErr.message } : { status: "ok" };
+
+      // AI check
+      checks.ai_gateway = Deno.env.get("LOVABLE_API_KEY") ? { status: "ok" } : { status: "missing", message: "LOVABLE_API_KEY not set" };
+
+      const allOk = Object.values(checks).every((c: any) => c.status === "ok");
+      return jsonResponse({ status: allOk ? "all_systems_operational" : "issues_detected", checks });
     }
 
     return jsonResponse({ error: `Unknown action: ${action}` }, 404);

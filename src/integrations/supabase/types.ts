@@ -162,11 +162,13 @@ export type Database = {
       }
       projects: {
         Row: {
+          build_metadata: Json | null
           build_status: string | null
           created_at: string
           description: string | null
           files: Json | null
           id: string
+          installer_url: string | null
           last_build_log: string | null
           name: string
           public_url: string | null
@@ -174,13 +176,16 @@ export type Database = {
           status: string
           updated_at: string
           user_id: string
+          version_history: Json | null
         }
         Insert: {
+          build_metadata?: Json | null
           build_status?: string | null
           created_at?: string
           description?: string | null
           files?: Json | null
           id?: string
+          installer_url?: string | null
           last_build_log?: string | null
           name: string
           public_url?: string | null
@@ -188,13 +193,16 @@ export type Database = {
           status?: string
           updated_at?: string
           user_id: string
+          version_history?: Json | null
         }
         Update: {
+          build_metadata?: Json | null
           build_status?: string | null
           created_at?: string
           description?: string | null
           files?: Json | null
           id?: string
+          installer_url?: string | null
           last_build_log?: string | null
           name?: string
           public_url?: string | null
@@ -202,6 +210,7 @@ export type Database = {
           status?: string
           updated_at?: string
           user_id?: string
+          version_history?: Json | null
         }
         Relationships: []
       }
