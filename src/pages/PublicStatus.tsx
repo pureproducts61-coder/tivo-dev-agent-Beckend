@@ -42,8 +42,8 @@ const PublicStatus = () => {
   return (
     <main className="min-h-screen bg-foreground text-background flex items-center justify-center px-6">
       <section className="w-full max-w-3xl text-center space-y-6">
-        <h1 className="text-3xl sm:text-5xl font-bold tracking-tight">TIVO AI OS Backend Engine</h1>
-        <p className="text-base sm:text-lg text-background/80">Public Notice Board</p>
+        <h1 className="text-3xl sm:text-5xl font-bold tracking-tight">TIVO DEV AGENT BACKEND</h1>
+        <p className="text-base sm:text-lg text-background/80">Autonomous Software Factory Engine</p>
         <div className="border border-background/20 rounded-2xl p-6 sm:p-8 bg-background/5">
           <p className="text-lg sm:text-2xl font-medium leading-relaxed">{currentNotice}</p>
         </div>
