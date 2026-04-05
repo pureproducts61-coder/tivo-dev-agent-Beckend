@@ -50,8 +50,8 @@ serve(async (req) => {
 
       return jsonResponse({
         status: dbStatus === "connected" ? "online" : "degraded",
-        service: "TIVO AI OS — Autonomous Software Factory",
-        version: "3.0.0",
+        service: "TIVO DEV AGENT BACKEND — Autonomous Software Factory",
+        version: "3.1.0",
         database: dbStatus,
         storage: storageStatus,
         ai_gateway: Deno.env.get("LOVABLE_API_KEY") ? "configured" : "missing",
