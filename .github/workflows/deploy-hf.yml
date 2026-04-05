@@ -39,49 +39,36 @@ jobs:
           git clone https://huggingface:${HF_TOKEN}@huggingface.co/spaces/${HF_SPACE} hf-space
 
           rm -rf hf-space/*
-          cp -r dist/* hf-space/
 
-          cat > hf-space/Dockerfile << 'DOCKERFILE'
-FROM nginx:alpine
-COPY . /usr/share/nginx/html
-COPY nginx.conf /etc/nginx/conf.d/default.conf
-EXPOSE 7860
-DOCKERFILE
+          # Copy Docker build engine files
+          cp hf-docker/Dockerfile hf-space/
+          cp hf-docker/server.js hf-space/
+          cp hf-docker/build-apk.sh hf-space/
+          cp hf-docker/build-exe.sh hf-space/
+          cp hf-docker/nginx.conf hf-space/
 
-          cat > hf-space/nginx.conf << 'NGINXCONF'
-server {
-    listen 7860;
-    root /usr/share/nginx/html;
-    index index.html;
-
-    location / {
-        try_files $uri $uri/ /index.html;
-    }
-
-    location ~* \.(js|css|png|jpg|jpeg|gif|ico|svg|woff|woff2|ttf|eot)$ {
-        expires 1y;
-        add_header Cache-Control "public, immutable";
-    }
-}
-NGINXCONF
+          # Copy frontend dist
+          mkdir -p hf-space/dist
+          cp -r dist/* hf-space/dist/
 
           cat > hf-space/README.md << 'README'
----
-title: Raz Dev
-emoji: 🤖
-colorFrom: green
-colorTo: gray
-sdk: docker
-app_port: 7860
-pinned: false
----
+          ---
+          title: TIVO DEV AGENT BACKEND
+          emoji: 🤖
+          colorFrom: green
+          colorTo: gray
+          sdk: docker
+          app_port: 7860
+          pinned: false
+          ---
 
-# Raz Dev - AI Coding Assistant
-README
+          # TIVO DEV AGENT BACKEND — Autonomous Software Factory
+          Supports APK, EXE, and Web bundle builds.
+          README
 
           cd hf-space
           git config user.email "github-actions@github.com"
           git config user.name "GitHub Actions"
           git add -A
-          git diff --cached --quiet || git commit -m "Deploy from GitHub Actions"
+          git diff --cached --quiet || git commit -m "Deploy TIVO Build Engine from GitHub Actions"
           git push
