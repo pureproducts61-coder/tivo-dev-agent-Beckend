@@ -421,6 +421,48 @@ serve(async (req) => {
       return jsonResponse(CAPABILITY_MAP);
     }
 
+    // === SMART SUGGEST ENDPOINT — NO AUTH REQUIRED ===
+    if (action === "suggest" && req.method === "POST") {
+      const suggestBody = await req.json().catch(() => ({}));
+      const task = suggestBody.task || "";
+      if (!task) return jsonResponse({ error: "task required" }, 400);
+
+      const taskLower = task.toLowerCase();
+      const matches: any[] = [];
+
+      for (const [intentKey, intent] of Object.entries(CAPABILITY_MAP.smart_routing.intents) as any[]) {
+        const score = intent.keywords.reduce((s: number, kw: string) => {
+          return s + (taskLower.includes(kw.toLowerCase()) ? 1 : 0);
+        }, 0);
+        if (score > 0) {
+          matches.push({ intent: intentKey, score, ...intent });
+        }
+      }
+
+      matches.sort((a: any, b: any) => b.score - a.score);
+
+      if (matches.length === 0) {
+        return jsonResponse({
+          suggested_endpoints: [{ endpoint: "ai-engine/chat", reason: "কোনো নির্দিষ্ট intent ম্যাচ হয়নি — জেনারেল AI চ্যাট ব্যবহার করো" }],
+          workflow_steps: ["POST ai-engine/chat → { messages: [{role:'user', content:'টাস্ক'}] }"],
+          explanation: "তোমার টাস্কটি নির্দিষ্ট কোনো ক্যাটাগরিতে পড়েনি। AI চ্যাটে বিস্তারিত জানাও।",
+        });
+      }
+
+      const best = matches[0];
+      return jsonResponse({
+        suggested_endpoints: matches.slice(0, 3).map((m: any) => ({
+          endpoint: m.primary,
+          alternative: m.alternative || null,
+          intent: m.intent,
+          confidence: Math.round((m.score / m.keywords.length) * 100),
+        })),
+        workflow_steps: best.workflow || [],
+        explanation: `তোমার টাস্ক "${task}" এর জন্য সবচেয়ে উপযুক্ত endpoint: ${best.primary}`,
+        all_matches: matches.length,
+      });
+    }
+
     // All other routes require master secret
     const MASTER_SECRET = Deno.env.get("MASTER_SECRET");
     const providedSecret = req.headers.get("x-master-secret");
