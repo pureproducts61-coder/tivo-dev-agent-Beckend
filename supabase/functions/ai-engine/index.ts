@@ -187,6 +187,14 @@ async function uploadToStorage(supabase: any, projectId: string, files: any[]) {
 serve(async (req) => {
   if (req.method === "OPTIONS") return new Response(null, { headers: corsHeaders });
 
+  // Rate limit
+  const clientIP = req.headers.get("x-forwarded-for") || req.headers.get("cf-connecting-ip") || "unknown";
+  const rl = checkRateLimit(clientIP);
+  if (!rl.allowed) return jsonResponse({ error: "Rate limit exceeded", retry_after_ms: rl.retryAfterMs }, 429);
+
+  // Queue
+  try { await acquireSlot(); } catch { return jsonResponse({ error: "Server busy" }, 503); }
+
   try {
     const MASTER_SECRET = Deno.env.get("MASTER_SECRET");
     const providedSecret = req.headers.get("x-master-secret");
