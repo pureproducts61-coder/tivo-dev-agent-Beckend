@@ -7,6 +7,39 @@ const corsHeaders = {
   "Access-Control-Allow-Methods": "POST, OPTIONS",
 };
 
+// === RATE LIMITER ===
+const rateLimitStore = new Map<string, { count: number; resetAt: number }>();
+const RATE_LIMIT = { maxRequests: 30, windowMs: 60_000 };
+
+function checkRateLimit(key: string): { allowed: boolean; remaining: number; retryAfterMs?: number } {
+  const now = Date.now();
+  const entry = rateLimitStore.get(key);
+  if (!entry || now > entry.resetAt) {
+    rateLimitStore.set(key, { count: 1, resetAt: now + RATE_LIMIT.windowMs });
+    return { allowed: true, remaining: RATE_LIMIT.maxRequests - 1 };
+  }
+  if (entry.count >= RATE_LIMIT.maxRequests) {
+    return { allowed: false, remaining: 0, retryAfterMs: entry.resetAt - now };
+  }
+  entry.count++;
+  return { allowed: true, remaining: RATE_LIMIT.maxRequests - entry.count };
+}
+
+// === REQUEST QUEUE ===
+let activeRequests = 0;
+const MAX_CONCURRENT = 5;
+const requestQueue: Array<{ resolve: () => void }> = [];
+
+async function acquireSlot(): Promise<void> {
+  if (activeRequests < MAX_CONCURRENT) { activeRequests++; return; }
+  return new Promise((resolve) => { requestQueue.push({ resolve }); });
+}
+
+function releaseSlot() {
+  activeRequests--;
+  if (requestQueue.length > 0) { const next = requestQueue.shift()!; activeRequests++; next.resolve(); }
+}
+
 function jsonResponse(data: any, status = 200) {
   return new Response(JSON.stringify(data), {
     status,
@@ -153,6 +186,14 @@ async function uploadToStorage(supabase: any, projectId: string, files: any[]) {
 
 serve(async (req) => {
   if (req.method === "OPTIONS") return new Response(null, { headers: corsHeaders });
+
+  // Rate limit
+  const clientIP = req.headers.get("x-forwarded-for") || req.headers.get("cf-connecting-ip") || "unknown";
+  const rl = checkRateLimit(clientIP);
+  if (!rl.allowed) return jsonResponse({ error: "Rate limit exceeded", retry_after_ms: rl.retryAfterMs }, 429);
+
+  // Queue
+  try { await acquireSlot(); } catch { return jsonResponse({ error: "Server busy" }, 503); }
 
   try {
     const MASTER_SECRET = Deno.env.get("MASTER_SECRET");
@@ -741,5 +782,7 @@ Include: overview, setup, API reference, component docs, examples, troubleshooti
   } catch (e) {
     console.error("AI Engine error:", e);
     return jsonResponse({ error: e instanceof Error ? e.message : "Unknown error" }, 500);
+  } finally {
+    releaseSlot();
   }
 });

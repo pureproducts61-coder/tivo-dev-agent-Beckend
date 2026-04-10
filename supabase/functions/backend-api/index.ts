@@ -21,15 +21,21 @@ function checkSupabaseConnection() {
   return createClient(url, key);
 }
 
-// === COMPLETE CAPABILITY MAP v5.0 ===
+// === COMPLETE CAPABILITY MAP v5.5 ===
 const CAPABILITY_MAP = {
   service: "TIVO DEV AGENT BACKEND — Autonomous Software Factory",
-  version: "5.0.0",
+  version: "5.5.0",
   description: "A headless backend engine for autonomous software generation, testing, auditing, native app building, and delivery. Controlled entirely via API with MASTER_SECRET authentication.",
 
   auth: {
     method: "x-master-secret header",
     description: "Every request (except /health, /capabilities, /suggest, /frontend-ai-guide) requires the x-master-secret header.",
+  },
+
+  rate_limiting: {
+    description: "প্রতিটি edge function-এ rate limiting (30 req/min) এবং request queue (max 5 concurrent) আছে",
+    per_ip: "30 requests/minute",
+    max_concurrent: 5,
   },
 
   endpoints: {
@@ -145,6 +151,41 @@ const CAPABILITY_MAP = {
     "sandbox/auto-test-fix": { method: "POST", category: "quality", description: "🔄 ইটারেটিভ বাগ ফিক্স", body: { code: "string?", project_id: "string?", max_iterations: "number?" }, returns: "{ success, fixed_code, iterations[] }" },
     "sandbox/factory": { method: "POST", category: "factory", description: "🏗️ ফ্যাক্টরি পাইপলাইন", body: { description: "string (required)", framework: "string?" }, returns: "{ success, project_id, pipeline[] }" },
     "sandbox/execute": { method: "POST", category: "general", description: "কাস্টম কমান্ড", body: { command: "string (required)" }, returns: "{ success, result }" },
+    "sandbox/code-to-image": {
+      method: "POST", category: "render",
+      description: "🖼️ কোড থেকে UI প্রিভিউ HTML জেনারেট — ব্রাউজার ছাড়াই UI দেখো",
+      when_to_use: "কোডের UI কেমন দেখাবে তা প্রিভিউ করতে",
+      body: { code: "string?", project_id: "string?", theme: "string?", viewport: "string?" },
+      returns: "{ success, render: { html, description, preview_url } }",
+    },
+    "sandbox/generate-schema": {
+      method: "POST", category: "database",
+      description: "🗄️ ডাটাবেইজ স্কিমা জেনারেশন — SQL, RLS, indexes, seed data সহ",
+      when_to_use: "প্রজেক্টের জন্য সম্পূর্ণ ডাটাবেইজ স্কিমা তৈরি করতে",
+      body: { description: "string (required)", database_type: "string?", tables: "array?", relationships: "array?", features: "string[]?" },
+      returns: "{ success, schema: { tables, sql_migration, seed_data } }",
+    },
+    "sandbox/deploy-automation": {
+      method: "POST", category: "deploy",
+      description: "🚀 ডিপ্লয়মেন্ট অটোমেশন — Vercel/Netlify/Docker কনফিগ জেনারেট",
+      when_to_use: "প্রজেক্ট ডিপ্লয় করার জন্য কনফিগ ফাইল তৈরি করতে",
+      body: { project_id: "string (required)", deploy_target: "string?", config: "object?" },
+      returns: "{ success, deployment: { config_files, deploy_commands, environment_variables } }",
+    },
+    "sandbox/generate-components": {
+      method: "POST", category: "code",
+      description: "🧩 কম্পোনেন্ট লাইব্রেরি জেনারেট — রিইউজেবল UI কম্পোনেন্ট তৈরি",
+      when_to_use: "Button, Modal, Card ইত্যাদি কম্পোনেন্ট লাইব্রেরি তৈরি করতে",
+      body: { components: "string[] (required)", framework: "string?", style_system: "string?", theme: "object?" },
+      returns: "{ success, library: { files, usage_examples } }",
+    },
+    "sandbox/analyze-deps": {
+      method: "POST", category: "quality",
+      description: "📦 ডিপেন্ডেন্সি এনালাইজার — security, outdated, size ইম্প্যাক্ট চেক",
+      when_to_use: "প্রজেক্টের package.json এনালাইজ করতে",
+      body: { package_json: "string?", project_id: "string?" },
+      returns: "{ success, analysis: { health_score, outdated, security_issues } }",
+    },
 
     // === SYSTEM ===
     "backend-api/health": { method: "GET", category: "system", auth_required: false, description: "সিস্টেম হেলথ চেক" },
