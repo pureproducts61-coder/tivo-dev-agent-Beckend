@@ -782,5 +782,7 @@ Include: overview, setup, API reference, component docs, examples, troubleshooti
   } catch (e) {
     console.error("AI Engine error:", e);
     return jsonResponse({ error: e instanceof Error ? e.message : "Unknown error" }, 500);
+  } finally {
+    releaseSlot();
   }
 });
