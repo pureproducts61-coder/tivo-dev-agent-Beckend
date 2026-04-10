@@ -21,15 +21,21 @@ function checkSupabaseConnection() {
   return createClient(url, key);
 }
 
-// === COMPLETE CAPABILITY MAP v5.0 ===
+// === COMPLETE CAPABILITY MAP v5.5 ===
 const CAPABILITY_MAP = {
   service: "TIVO DEV AGENT BACKEND — Autonomous Software Factory",
-  version: "5.0.0",
+  version: "5.5.0",
   description: "A headless backend engine for autonomous software generation, testing, auditing, native app building, and delivery. Controlled entirely via API with MASTER_SECRET authentication.",
 
   auth: {
     method: "x-master-secret header",
     description: "Every request (except /health, /capabilities, /suggest, /frontend-ai-guide) requires the x-master-secret header.",
+  },
+
+  rate_limiting: {
+    description: "প্রতিটি edge function-এ rate limiting (30 req/min) এবং request queue (max 5 concurrent) আছে",
+    per_ip: "30 requests/minute",
+    max_concurrent: 5,
   },
 
   endpoints: {
