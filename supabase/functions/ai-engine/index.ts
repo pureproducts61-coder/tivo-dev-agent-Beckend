@@ -47,11 +47,19 @@ function jsonResponse(data: any, status = 200) {
   });
 }
 
-function checkSupabaseConnection() {
+// Returns supabase client or null (never throws)
+function tryGetSupabase() {
   const url = Deno.env.get("SUPABASE_URL");
   const key = Deno.env.get("SUPABASE_SERVICE_ROLE_KEY");
-  if (!url || !key) throw new Error("CONNECTION_ERROR: Missing Supabase credentials");
+  if (!url || !key) return null;
   return createClient(url, key);
+}
+
+// Requires supabase — returns client or error response
+function requireSupabase(): { client: any } | { error: Response } {
+  const supabase = tryGetSupabase();
+  if (!supabase) return { error: jsonResponse({ error: "Database not configured. AI-only endpoints still work.", hint: "Set SUPABASE_URL and SUPABASE_SERVICE_ROLE_KEY secrets." }, 503) };
+  return { client: supabase };
 }
 
 async function callAI(messages: any[], stream = false, model = "google/gemini-3-flash-preview") {
@@ -85,14 +93,12 @@ function parseJsonFromAI(result: string) {
   } catch { return null; }
 }
 
-function generateInstallerScripts(projectName: string, framework: string) {
+function generateInstallerScripts(projectName: string) {
   const setupSh = `#!/bin/bash
 echo "========================================="
 echo "  ${projectName} — Auto Installer"
 echo "  Powered by TIVO DEV AGENT"
 echo "========================================="
-echo ""
-
 if ! command -v node &> /dev/null; then
   echo "❌ Node.js not found. Installing..."
   if command -v curl &> /dev/null; then
@@ -105,15 +111,11 @@ if ! command -v node &> /dev/null; then
     exit 1
   fi
 fi
-
 echo "✅ Node.js $(node -v) detected"
 echo "📦 Installing dependencies..."
 npm install
-
 echo "🔨 Building..."
 npm run build 2>/dev/null || echo "No build step"
-
-echo ""
 echo "🚀 Starting ${projectName}..."
 echo "   Open http://localhost:3000"
 npm start || npm run dev || npm run preview
@@ -125,8 +127,6 @@ echo =========================================
 echo   ${projectName} — Auto Installer
 echo   Powered by TIVO DEV AGENT
 echo =========================================
-echo.
-
 where node >nul 2>nul
 if %ERRORLEVEL% NEQ 0 (
   echo Node.js not found!
@@ -135,15 +135,11 @@ if %ERRORLEVEL% NEQ 0 (
   pause
   exit /b 1
 )
-
 echo Node.js detected
 echo Installing dependencies...
 call npm install
-
 echo Building...
 call npm run build 2>nul
-
-echo.
 echo Starting ${projectName}...
 echo Open http://localhost:3000
 call npm start || call npm run dev || call npm run preview
@@ -202,14 +198,14 @@ serve(async (req) => {
       return jsonResponse({ error: "Unauthorized" }, 401);
     }
 
-    let supabase: any;
-    try { supabase = checkSupabaseConnection(); }
-    catch (e) { return jsonResponse({ error: e instanceof Error ? e.message : "Connection Error", alert: "ADMIN_CONNECTION_ERROR" }, 503); }
-
     const url = new URL(req.url);
     const pathParts = url.pathname.split("/").filter(Boolean);
     const action = pathParts[pathParts.length - 1] || "";
     const body = await req.json().catch(() => ({}));
+
+    // =============================================
+    // AI-ONLY ENDPOINTS (No Supabase needed)
+    // =============================================
 
     // === GENERATE CODE ===
     if (action === "generate") {
@@ -225,7 +221,6 @@ Rules:
 - Include proper error handling and edge cases
 - Follow best practices and modern patterns
 - Add helpful comments for complex logic
-- If generating a full project, include ALL necessary files
 - Use modern syntax (ES2022+, React 18+, TypeScript strict)`;
 
       const messages = [
@@ -249,19 +244,8 @@ Rules:
     if (action === "review") {
       const { code, language, focus } = body;
       if (!code) return jsonResponse({ error: "code required" }, 400);
-
       const result = await callAI([
-        {
-          role: "system",
-          content: `You are TIVO DEV AGENT Code Reviewer. Deep analysis:
-1. **Security** — XSS, injection, auth bypass, data exposure
-2. **Performance** — bottlenecks, memory leaks, unnecessary re-renders
-3. **Architecture** — SOLID principles, clean code, separation of concerns
-4. **Bug Detection** — logic errors, edge cases, race conditions
-5. **Suggestions** — concrete improvements with code examples
-${focus ? `Focus area: ${focus}` : ""} ${language ? `Language: ${language}` : ""}
-Provide specific line references and working fix code.`,
-        },
+        { role: "system", content: `You are TIVO DEV AGENT Code Reviewer. Deep analysis:\n1. Security 2. Performance 3. Architecture 4. Bug Detection 5. Suggestions\n${focus ? `Focus: ${focus}` : ""} ${language ? `Language: ${language}` : ""}\nProvide specific line references and working fix code.` },
         { role: "user", content: code },
       ], false, "google/gemini-2.5-pro");
       return jsonResponse({ success: true, review: result });
@@ -271,24 +255,14 @@ Provide specific line references and working fix code.`,
     if (action === "fix") {
       const { code, error_message, language } = body;
       if (!code) return jsonResponse({ error: "code required" }, 400);
-
       const result = await callAI([
-        {
-          role: "system",
-          content: `You are TIVO DEV AGENT Bug Fixer.
-1. Identify root cause precisely
-2. Explain the bug clearly
-3. Provide COMPLETE fixed code (not patches)
-4. List all changes made
-${language ? `Language: ${language}` : ""}
-CRITICAL: The output must be immediately runnable.`,
-        },
+        { role: "system", content: `You are TIVO DEV AGENT Bug Fixer.\n1. Identify root cause 2. Explain the bug 3. Provide COMPLETE fixed code 4. List all changes\n${language ? `Language: ${language}` : ""}\nCRITICAL: Output must be immediately runnable.` },
         { role: "user", content: `Code:\n\`\`\`\n${code}\n\`\`\`\n${error_message ? `\nError: ${error_message}` : ""}` },
       ], false, "google/gemini-2.5-pro");
       return jsonResponse({ success: true, fix: result });
     }
 
-    // === MULTI-FILE PROJECT GENERATION ===
+    // === GENERATE PROJECT (AI-only, saves to DB if available) ===
     if (action === "generate-project") {
       const { description, framework, features, model, tech_stack } = body;
       if (!description) return jsonResponse({ error: "description required" }, 400);
@@ -310,13 +284,10 @@ Return a JSON object:
 }
 
 CRITICAL RULES:
-- Generate COMPLETE, WORKING files — no TODOs, no placeholders, no "..."
+- Generate COMPLETE, WORKING files — no TODOs, no placeholders
 - Include package.json with ALL dependencies and proper scripts
 - Include README.md with setup instructions
-- Include all config files (tsconfig, vite.config, tailwind.config, etc.)
-- Handle error states, loading states, empty states
-- Responsive design (mobile-first)
-- Proper TypeScript types
+- Include all config files
 - At least 20+ files for any serious application`;
 
       const result = await callAI([
@@ -347,10 +318,62 @@ CRITICAL RULES:
       return jsonResponse({ success: true, response: result });
     }
 
-    // === AUTONOMOUS BUILD PIPELINE (Enhanced v5) ===
+    // === REFACTOR ===
+    if (action === "refactor") {
+      const { code, language, goal } = body;
+      if (!code) return jsonResponse({ error: "code required" }, 400);
+      const result = await callAI([
+        { role: "system", content: `TIVO DEV AGENT Refactorer. ${language ? `Language: ${language}` : ""} ${goal ? `Goal: ${goal}` : "DRY, SOLID, clean code."}\nReturn complete refactored code with explanations.` },
+        { role: "user", content: code },
+      ], false, "google/gemini-2.5-pro");
+      return jsonResponse({ success: true, refactored: result });
+    }
+
+    // === CONVERT ===
+    if (action === "convert") {
+      const { code, from_language, to_language, from_framework, to_framework } = body;
+      if (!code) return jsonResponse({ error: "code required" }, 400);
+      const result = await callAI([
+        { role: "system", content: `TIVO DEV AGENT Code Converter.\nFrom: ${from_language || "auto-detect"} ${from_framework ? `(${from_framework})` : ""}\nTo: ${to_language || "JavaScript"} ${to_framework ? `(${to_framework})` : ""}\nReturn COMPLETE converted code.` },
+        { role: "user", content: code },
+      ], false, "google/gemini-2.5-pro");
+      return jsonResponse({ success: true, converted: result });
+    }
+
+    // === GENERATE API ===
+    if (action === "generate-api") {
+      const { description, endpoints, database_schema, auth_type } = body;
+      if (!description) return jsonResponse({ error: "description required" }, 400);
+      const result = await callAI([
+        { role: "system", content: `TIVO DEV AGENT API Builder. Generate complete REST API.\n${endpoints ? `Endpoints: ${JSON.stringify(endpoints)}` : ""}\n${database_schema ? `Schema: ${JSON.stringify(database_schema)}` : ""}\n${auth_type ? `Auth: ${auth_type}` : ""}\nReturn complete, production-ready API code with routes, controllers, middleware, validation.` },
+        { role: "user", content: description },
+      ], false, "google/gemini-2.5-pro");
+      return jsonResponse({ success: true, api: result });
+    }
+
+    // === GENERATE DOCS ===
+    if (action === "generate-docs") {
+      const { code, doc_type } = body;
+      if (!code) return jsonResponse({ error: "code required" }, 400);
+      const result = await callAI([
+        { role: "system", content: `TIVO DEV AGENT Documentation Generator. ${doc_type ? `Type: ${doc_type}` : "Full Markdown documentation."}\nGenerate comprehensive, well-structured documentation.` },
+        { role: "user", content: code },
+      ], false, "google/gemini-2.5-flash");
+      return jsonResponse({ success: true, documentation: result });
+    }
+
+    // =============================================
+    // DB-REQUIRED ENDPOINTS (Need Supabase)
+    // =============================================
+
+    // === AUTONOMOUS BUILD PIPELINE ===
     if (action === "auto-build") {
       const { project_id, description, framework, features, user_id, quality_target, model: preferredModel } = body;
       if (!description && !project_id) return jsonResponse({ error: "description or project_id required" }, 400);
+
+      const sbResult = requireSupabase();
+      if ("error" in sbResult) return sbResult.error;
+      const supabase = sbResult.client;
 
       const steps: any[] = [];
       const startTime = Date.now();
@@ -381,7 +404,6 @@ CRITICAL:
 - Every component must be complete — no TODOs
 - Include proper routing, error boundaries, loading states
 - Mobile responsive with Tailwind
-- Include public/index.html or index.html entry point
 - TypeScript strict mode`,
           },
           { role: "user", content: description! },
@@ -402,8 +424,7 @@ CRITICAL:
           content: `You are TIVO DEV AGENT Quality Auditor. RIGOROUS audit.
 Return JSON: {"score":0-100,"issues":[{"file":"path","severity":"critical|high|medium|low","message":"string","fix":"code"}],"fixed_files":[{"path":"string","content":"COMPLETE fixed content"}]}
 Check: security, bugs, performance, accessibility, responsive design, TypeScript errors, import issues, missing dependencies.
-Fix ALL issues — return COMPLETE file content, not patches.
-If perfect, return score 100 with original files.`,
+Fix ALL issues — return COMPLETE file content, not patches.`,
         },
         { role: "user", content: auditPrompt },
       ], false, aiModel);
@@ -414,15 +435,14 @@ If perfect, return score 100 with original files.`,
       let finalFiles = audit.fixed_files?.length ? audit.fixed_files : filesList;
       let currentScore = audit.score || 50;
 
-      // Step 3: Iterative Auto-Fix (up to 5 passes until target score)
+      // Step 3: Iterative Auto-Fix
       for (let i = 0; i < 5 && currentScore < targetScore; i++) {
         const reauditPrompt = finalFiles.slice(0, 25).map((f: any) => `--- ${f.path} ---\n${(f.content || "").slice(0, 2500)}`).join("\n\n");
         const reauditResult = await callAI([
           {
             role: "system",
-            content: `Re-audit pass ${i + 1}. Target score: ${targetScore}. Current: ${currentScore}.
-Fix ALL remaining issues. Return JSON: {"score":0-100,"fixed_files":[{"path":"string","content":"COMPLETE content"}],"changes_made":["description"]}
-MUST return complete file content for every file that changed.`,
+            content: `Re-audit pass ${i + 1}. Target: ${targetScore}. Current: ${currentScore}.
+Fix ALL remaining issues. Return JSON: {"score":0-100,"fixed_files":[{"path":"string","content":"COMPLETE content"}],"changes_made":["description"]}`,
           },
           { role: "user", content: reauditPrompt },
         ], false, aiModel);
@@ -440,345 +460,209 @@ MUST return complete file content for every file that changed.`,
       }
 
       // Step 4: Visual Audit
-      const uiFiles = finalFiles.filter((f: any) => /\.(html|tsx|jsx|css|vue|svelte)$/.test(f.path));
-      if (uiFiles.length > 0) {
-        const visualPrompt = uiFiles.slice(0, 15).map((f: any) => `--- ${f.path} ---\n${(f.content || "").slice(0, 2000)}`).join("\n\n");
-        const visualResult = await callAI([
-          {
-            role: "system",
-            content: `TIVO DEV AGENT Visual Auditor. Analyze UI code as if you see the rendered output.
-Check: layout, spacing, responsive, colors, contrast, typography, accessibility, polish.
-Return JSON: {"ui_score":0-100,"visual_issues":[{"file":"path","issue":"string","fix":"string"}],"fixed_files":[{"path":"string","content":"COMPLETE fixed content"}]}`,
-          },
-          { role: "user", content: visualPrompt },
+      const uiFiles = finalFiles.filter((f: any) => /\.(html|tsx|jsx|css)$/.test(f.path));
+      if (uiFiles.length) {
+        const vResult = await callAI([
+          { role: "system", content: `Visual audit. Check layout, colors, responsive, accessibility. Return JSON: {"ui_score":0-100,"fixed_files":[{"path":"string","content":"string"}]}` },
+          { role: "user", content: uiFiles.slice(0, 15).map((f: any) => `--- ${f.path} ---\n${(f.content || "").slice(0, 2000)}`).join("\n\n") },
         ], false, aiModel);
-
-        const visualAudit = parseJsonFromAI(visualResult);
-        if (visualAudit?.fixed_files?.length) {
-          for (const vf of visualAudit.fixed_files) {
+        const visual = parseJsonFromAI(vResult);
+        if (visual?.fixed_files?.length) {
+          for (const vf of visual.fixed_files) {
             const idx = finalFiles.findIndex((f: any) => f.path === vf.path);
             if (idx >= 0) finalFiles[idx] = vf;
           }
         }
-        steps.push({ step: "visual_audit", ui_score: visualAudit?.ui_score || 0 });
+        steps.push({ step: "visual_audit", score: visual?.ui_score || 0 });
       }
 
-      // Step 5: Generate installers
-      const installers = generateInstallerScripts(projectName!, framework || "react");
-      finalFiles = finalFiles.filter((f: any) => f.path !== "setup.sh" && f.path !== "install.bat");
+      // Add installer scripts
+      const installers = generateInstallerScripts(projectName);
       finalFiles.push({ path: "setup.sh", content: installers["setup.sh"] });
       finalFiles.push({ path: "install.bat", content: installers["install.bat"] });
-      steps.push({ step: "generate_installers", status: "done" });
 
-      // Step 6: Save to DB & Storage
-      let savedProject: any;
-      if (project_id) {
-        await supabase.from("projects").update({
-          files: finalFiles,
-          build_status: "built",
-          build_metadata: { steps, audit_score: currentScore, build_time_ms: Date.now() - startTime, file_count: finalFiles.length },
-          last_build_log: JSON.stringify({ steps, score: currentScore }).slice(0, 5000),
-        }).eq("id", project_id);
-        savedProject = { id: project_id };
-      } else {
-        const { data } = await supabase.from("projects").insert({
-          user_id: user_id || "system",
-          name: projectName!,
-          description: description || "",
-          files: finalFiles,
-          status: "active",
-          build_status: "built",
-          build_metadata: { steps, audit_score: currentScore, build_time_ms: Date.now() - startTime, file_count: finalFiles.length },
-        }).select().single();
-        savedProject = data;
-      }
+      // Step 5: Save to DB
+      const { data: saved } = await supabase.from("projects").insert({
+        user_id: user_id || "system",
+        name: projectName,
+        description: description || "",
+        files: finalFiles,
+        status: "active",
+        build_status: "live",
+        build_metadata: { pipeline: steps, audit_score: currentScore, build_time_ms: Date.now() - startTime },
+        version_history: [{ version: 1, timestamp: new Date().toISOString(), note: "Auto-build pipeline" }],
+      }).select().single();
 
-      if (savedProject?.id) {
-        await uploadToStorage(supabase, savedProject.id, finalFiles);
-        const publicUrl = `${Deno.env.get("SUPABASE_URL")}/storage/v1/object/public/project-files/${savedProject.id}/index.html`;
-        const installerUrl = `${Deno.env.get("SUPABASE_URL")}/functions/v1/project-manager/download?id=${savedProject.id}&format=zip`;
-        await supabase.from("projects").update({ public_url: publicUrl, installer_url: installerUrl, build_status: "live" }).eq("id", savedProject.id);
+      let downloadUrl = null;
+      let publicUrl = null;
+
+      if (saved?.id) {
+        await uploadToStorage(supabase, saved.id, finalFiles);
+        publicUrl = `${Deno.env.get("SUPABASE_URL")}/storage/v1/object/public/project-files/${saved.id}/index.html`;
+        downloadUrl = `${Deno.env.get("SUPABASE_URL")}/functions/v1/project-manager/download?id=${saved.id}&format=zip`;
+        await supabase.from("projects").update({ public_url: publicUrl, installer_url: downloadUrl }).eq("id", saved.id);
         steps.push({ step: "deploy", public_url: publicUrl });
-        await saveVersion(supabase, savedProject.id, finalFiles, `Auto-build: ${description || "rebuild"}`);
       }
 
       await supabase.from("memory_logs").insert({
         action: "auto_build_complete",
-        details: { project_id: savedProject?.id, description, score: currentScore, files_count: finalFiles.length, build_time_ms: Date.now() - startTime },
-      });
+        user_id: user_id || null,
+        details: { project_id: saved?.id, description, steps_count: steps.length, audit_score: currentScore, build_time_ms: Date.now() - startTime },
+      }).catch(() => {});
 
       return jsonResponse({
         success: true,
-        project_id: savedProject?.id,
-        project_name: projectName!,
+        project_id: saved?.id,
+        project_name: projectName,
         audit_score: currentScore,
         steps,
         files_count: finalFiles.length,
         build_time_ms: Date.now() - startTime,
-        download_url: savedProject?.id ? `${Deno.env.get("SUPABASE_URL")}/functions/v1/project-manager/download?id=${savedProject.id}&format=zip` : null,
-        public_url: steps.find((s: any) => s.public_url)?.public_url || null,
+        download_url: downloadUrl,
+        public_url: publicUrl,
       });
     }
 
-    // === BUILD NATIVE (APK/EXE) — Orchestrates HF Space Build Engine ===
+    // === BUILD NATIVE (APK/EXE via HF Space) ===
     if (action === "build-native") {
       const { project_id, build_type, hf_space_url, app_name, package_name } = body;
-      if (!project_id) return jsonResponse({ error: "project_id required" }, 400);
-      if (!build_type || !["apk", "exe"].includes(build_type)) return jsonResponse({ error: "build_type must be 'apk' or 'exe'" }, 400);
-      if (!hf_space_url) return jsonResponse({ error: "hf_space_url required (your HF Space URL)" }, 400);
+      if (!project_id || !build_type) return jsonResponse({ error: "project_id and build_type required" }, 400);
+      if (!hf_space_url) return jsonResponse({ error: "hf_space_url required — HF Space URL where Docker build engine is deployed" }, 400);
 
-      const startTime = Date.now();
-      const pipeline: any[] = [];
+      const sbResult = requireSupabase();
+      if ("error" in sbResult) return sbResult.error;
+      const supabase = sbResult.client;
 
-      // 1. Fetch project files
       const { data: project } = await supabase.from("projects").select("*").eq("id", project_id).single();
       if (!project) return jsonResponse({ error: "Project not found" }, 404);
 
-      let files = (project.files as any[]) || [];
-      pipeline.push({ step: "fetch_files", count: files.length });
+      const files = (project.files as any[]) || [];
+      const config = { app_name: app_name || project.name, package_name: package_name || "com.tivo.app" };
 
-      // 2. If files don't have content (only URLs), download them
-      if (files.length === 0 || (!files[0]?.content && files[0]?.url)) {
-        const { data: storageFiles } = await supabase.storage.from("project-files").list(project_id, { limit: 500 });
-        if (storageFiles?.length) {
-          const downloadedFiles = [];
-          for (const sf of storageFiles) {
-            if (!sf.id) continue;
-            const { data: fileData } = await supabase.storage.from("project-files").download(`${project_id}/${sf.name}`);
-            if (fileData) {
-              downloadedFiles.push({ path: sf.name, content: await fileData.text() });
-            }
-          }
-          files = downloadedFiles;
-          pipeline.push({ step: "download_from_storage", count: files.length });
-        }
+      const endpoint = build_type === "apk" ? "/api/build-apk" : "/api/build-exe";
+      const hfUrl = hf_space_url.replace(/\/$/, "");
+
+      const hfResponse = await fetch(`${hfUrl}${endpoint}`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ files, config }),
+      });
+
+      if (!hfResponse.ok) {
+        const errText = await hfResponse.text().catch(() => "HF Space unreachable");
+        return jsonResponse({ error: `HF Build Engine error: ${errText}`, hint: "Ensure HF Space is running and Docker build engine is deployed" }, 502);
       }
 
-      if (files.length === 0) return jsonResponse({ error: "No files found for this project" }, 400);
+      const buildResult = await hfResponse.json();
 
-      // 3. Ensure project has proper structure for native build
-      const hasPackageJson = files.some((f: any) => f.path === "package.json");
-      if (!hasPackageJson) {
-        // AI generates a proper package.json
-        const pkgResult = await callAI([
-          {
-            role: "system",
-            content: `Generate a package.json for this project. Analyze the files and determine dependencies.
-Return ONLY valid JSON for package.json. Include all needed dependencies, scripts (dev, build, start).`,
-          },
-          { role: "user", content: files.slice(0, 10).map((f: any) => `--- ${f.path} ---\n${(f.content || "").slice(0, 500)}`).join("\n\n") },
-        ]);
-        const pkgContent = parseJsonFromAI(pkgResult);
-        if (pkgContent) {
-          files.push({ path: "package.json", content: JSON.stringify(pkgContent, null, 2) });
-          pipeline.push({ step: "generate_package_json" });
-        }
-      }
+      await supabase.from("projects").update({
+        build_status: `${build_type}_built`,
+        build_metadata: { ...((project.build_metadata as any) || {}), native_build: buildResult },
+        installer_url: buildResult.download_url ? `${hfUrl}${buildResult.download_url}` : project.installer_url,
+      }).eq("id", project_id);
 
-      // 4. Call HF Space Build Engine
-      const buildEndpoint = build_type === "apk" ? "/api/build-apk" : "/api/build-exe";
-      const buildConfig: any = { app_name: app_name || project.name || "TivoApp" };
-      if (build_type === "apk" && package_name) buildConfig.package_name = package_name;
+      await supabase.from("memory_logs").insert({
+        action: "native_build",
+        details: { project_id, build_type, build_id: buildResult.build_id, success: buildResult.success },
+      }).catch(() => {});
 
-      pipeline.push({ step: "calling_hf_build", endpoint: buildEndpoint, files_sent: files.length });
-
-      try {
-        const buildResp = await fetch(`${hf_space_url.replace(/\/$/, "")}${buildEndpoint}`, {
-          method: "POST",
-          headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({ files, config: buildConfig }),
-        });
-
-        if (!buildResp.ok) {
-          const errText = await buildResp.text();
-          pipeline.push({ step: "hf_build_error", status: buildResp.status, error: errText });
-          return jsonResponse({ success: false, error: `HF Build failed: ${errText}`, pipeline }, 500);
-        }
-
-        const buildResult = await buildResp.json();
-        pipeline.push({ step: "build_complete", result: buildResult });
-
-        // 5. Update project with build info
-        const downloadUrl = buildResult.download_url ? `${hf_space_url.replace(/\/$/, "")}${buildResult.download_url}` : null;
-        await supabase.from("projects").update({
-          build_status: `${build_type}_built`,
-          build_metadata: {
-            ...(project.build_metadata || {}),
-            native_build: {
-              type: build_type,
-              build_id: buildResult.build_id,
-              download_url: downloadUrl,
-              built_at: new Date().toISOString(),
-              build_time_ms: Date.now() - startTime,
-            },
-          },
-          installer_url: downloadUrl || project.installer_url,
-        }).eq("id", project_id);
-
-        await supabase.from("memory_logs").insert({
-          action: `native_${build_type}_built`,
-          details: { project_id, build_id: buildResult.build_id, download_url: downloadUrl, build_time_ms: Date.now() - startTime },
-        });
-
-        return jsonResponse({
-          success: true,
-          build_type,
-          build_id: buildResult.build_id,
-          download_url: downloadUrl,
-          pipeline,
-          build_time_ms: Date.now() - startTime,
-        });
-      } catch (fetchErr) {
-        pipeline.push({ step: "hf_connection_error", error: fetchErr instanceof Error ? fetchErr.message : "Unknown" });
-        return jsonResponse({
-          success: false,
-          error: `Cannot connect to HF Build Engine: ${fetchErr instanceof Error ? fetchErr.message : "Unknown error"}`,
-          hint: "Make sure your HF Space is running and the URL is correct",
-          pipeline,
-        }, 502);
-      }
+      return jsonResponse({
+        success: true,
+        build_type,
+        build_id: buildResult.build_id,
+        download_url: buildResult.download_url ? `${hfUrl}${buildResult.download_url}` : null,
+        pipeline: ["generate → audit → fix → visual → native_build"],
+      });
     }
 
-    // === FULL STACK BUILD (Generate + Build Native in one call) ===
+    // === FULL-STACK BUILD (Web + Native) ===
     if (action === "full-stack-build") {
       const { description, framework, features, user_id, build_type, hf_space_url, app_name, package_name } = body;
       if (!description) return jsonResponse({ error: "description required" }, 400);
 
-      const startTime = Date.now();
+      const sbResult = requireSupabase();
+      if ("error" in sbResult) return sbResult.error;
+      const supabase = sbResult.client;
 
-      // 1. Auto-build the web project first
-      const autoBuildResp = await fetch(req.url.replace("full-stack-build", "auto-build"), {
-        method: "POST",
-        headers: {
-          "Content-Type": "application/json",
-          "x-master-secret": req.headers.get("x-master-secret") || "",
+      // Step 1: Auto-build web project (reuse auto-build logic inline)
+      const aiModel = "google/gemini-2.5-pro";
+      const genResult = await callAI([
+        {
+          role: "system",
+          content: `Generate a COMPLETE project. Return JSON: {"project_name":"string","files":[{"path":"string","content":"string"}],"dependencies":[],"setup_commands":["npm install","npm run dev"]}
+Framework: ${framework || "react with vite and tailwind"}. ${features ? `Features: ${features.join(", ")}` : ""}
+Generate 15-40 files. Complete code, no TODOs. TypeScript strict.`,
         },
-        body: JSON.stringify({ description, framework, features, user_id }),
-      });
+        { role: "user", content: description },
+      ], false, aiModel);
 
-      const autoBuild = await autoBuildResp.json();
-      if (!autoBuild.success || !autoBuild.project_id) {
-        return jsonResponse({ success: false, error: "Auto-build failed", auto_build_result: autoBuild }, 500);
-      }
+      const projectData = parseJsonFromAI(genResult);
+      if (!projectData?.files) return jsonResponse({ error: "Generation failed" }, 500);
+
+      const projectName = projectData.project_name || "tivo-fullstack";
+      const installers = generateInstallerScripts(projectName);
+      projectData.files.push({ path: "setup.sh", content: installers["setup.sh"] });
+      projectData.files.push({ path: "install.bat", content: installers["install.bat"] });
+
+      // Save to DB
+      const { data: saved } = await supabase.from("projects").insert({
+        user_id: user_id || "system",
+        name: projectName,
+        description,
+        files: projectData.files,
+        status: "active",
+        build_status: "live",
+        build_metadata: { full_stack: true },
+        version_history: [{ version: 1, timestamp: new Date().toISOString(), note: "Full-stack build" }],
+      }).select().single();
 
       const result: any = {
         success: true,
-        project_id: autoBuild.project_id,
-        project_name: autoBuild.project_name,
-        audit_score: autoBuild.audit_score,
-        web_url: autoBuild.public_url,
-        web_download_url: autoBuild.download_url,
+        project_id: saved?.id,
+        project_name: projectName,
+        files_count: projectData.files.length,
       };
 
-      // 2. If native build requested and HF Space URL provided
-      if (build_type && hf_space_url) {
-        const nativeBuildResp = await fetch(req.url.replace("full-stack-build", "build-native"), {
-          method: "POST",
-          headers: {
-            "Content-Type": "application/json",
-            "x-master-secret": req.headers.get("x-master-secret") || "",
-          },
-          body: JSON.stringify({
-            project_id: autoBuild.project_id,
-            build_type,
-            hf_space_url,
-            app_name: app_name || autoBuild.project_name,
-            package_name,
-          }),
-        });
-
-        const nativeBuild = await nativeBuildResp.json();
-        result.native_build = nativeBuild;
-        result.native_download_url = nativeBuild.download_url;
+      if (saved?.id) {
+        await uploadToStorage(supabase, saved.id, projectData.files);
+        result.web_url = `${Deno.env.get("SUPABASE_URL")}/storage/v1/object/public/project-files/${saved.id}/index.html`;
+        result.web_download_url = `${Deno.env.get("SUPABASE_URL")}/functions/v1/project-manager/download?id=${saved.id}&format=zip`;
+        await supabase.from("projects").update({ public_url: result.web_url, installer_url: result.web_download_url }).eq("id", saved.id);
       }
 
-      result.total_build_time_ms = Date.now() - startTime;
+      // Step 2: Native build if requested
+      if (build_type && hf_space_url && saved?.id) {
+        try {
+          const endpoint = build_type === "apk" ? "/api/build-apk" : "/api/build-exe";
+          const hfUrl = hf_space_url.replace(/\/$/, "");
+          const config = { app_name: app_name || projectName, package_name: package_name || "com.tivo.app" };
+
+          const hfResponse = await fetch(`${hfUrl}${endpoint}`, {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({ files: projectData.files, config }),
+          });
+
+          if (hfResponse.ok) {
+            const buildResult = await hfResponse.json();
+            result.native_build = buildResult;
+            result.native_download_url = buildResult.download_url ? `${hfUrl}${buildResult.download_url}` : null;
+            await supabase.from("projects").update({
+              build_metadata: { full_stack: true, native_build: buildResult },
+              installer_url: result.native_download_url || result.web_download_url,
+            }).eq("id", saved.id);
+          } else {
+            result.native_build_error = "HF Space build failed — web version is still available";
+          }
+        } catch (e) {
+          result.native_build_error = `Native build failed: ${e instanceof Error ? e.message : "Unknown"} — web version is still available`;
+        }
+      }
+
       return jsonResponse(result);
     }
 
-    // === REFACTOR CODE ===
-    if (action === "refactor") {
-      const { code, language, goal } = body;
-      if (!code) return jsonResponse({ error: "code required" }, 400);
-
-      const result = await callAI([
-        {
-          role: "system",
-          content: `TIVO DEV AGENT Code Refactorer. ${language ? `Language: ${language}` : ""}
-${goal ? `Goal: ${goal}` : "Improve readability, performance, and maintainability."}
-Return the COMPLETE refactored code with explanations of changes.
-Apply: DRY, SOLID, clean code principles, modern patterns.`,
-        },
-        { role: "user", content: code },
-      ], false, "google/gemini-2.5-pro");
-      return jsonResponse({ success: true, refactored: result });
-    }
-
-    // === CONVERT/MIGRATE CODE ===
-    if (action === "convert") {
-      const { code, from_language, to_language, from_framework, to_framework } = body;
-      if (!code) return jsonResponse({ error: "code required" }, 400);
-
-      const result = await callAI([
-        {
-          role: "system",
-          content: `TIVO DEV AGENT Code Converter.
-${from_language ? `From: ${from_language}` : ""} ${to_language ? `To: ${to_language}` : ""}
-${from_framework ? `From framework: ${from_framework}` : ""} ${to_framework ? `To framework: ${to_framework}` : ""}
-Return COMPLETE converted code. Maintain all functionality. Use idiomatic patterns for the target.`,
-        },
-        { role: "user", content: code },
-      ], false, "google/gemini-2.5-pro");
-      return jsonResponse({ success: true, converted: result });
-    }
-
-    // === GENERATE API ===
-    if (action === "generate-api") {
-      const { description, endpoints, database_schema, auth_type } = body;
-      if (!description) return jsonResponse({ error: "description required" }, 400);
-
-      const result = await callAI([
-        {
-          role: "system",
-          content: `TIVO DEV AGENT API Builder. Generate a complete REST API.
-${endpoints ? `Endpoints: ${JSON.stringify(endpoints)}` : ""}
-${database_schema ? `Database: ${JSON.stringify(database_schema)}` : ""}
-${auth_type ? `Auth: ${auth_type}` : "JWT auth"}
-Return JSON: {"files":[{"path":"string","content":"string"}],"endpoints":[{"method":"string","path":"string","description":"string"}],"setup":"string"}
-Include: routes, controllers, middleware, models, validation, error handling.`,
-        },
-        { role: "user", content: description },
-      ], false, "google/gemini-2.5-pro");
-
-      return jsonResponse({ success: true, api: parseJsonFromAI(result) || { raw: result } });
-    }
-
-    // === GENERATE DOCUMENTATION ===
-    if (action === "generate-docs") {
-      const { code, project_id, doc_type } = body;
-
-      let codeToDoc = code;
-      if (!codeToDoc && project_id) {
-        const { data: project } = await supabase.from("projects").select("files, name, description").eq("id", project_id).single();
-        if (project?.files) {
-          codeToDoc = (project.files as any[]).map((f: any) => `--- ${f.path} ---\n${f.content}`).join("\n\n");
-        }
-      }
-      if (!codeToDoc) return jsonResponse({ error: "code or project_id required" }, 400);
-
-      const result = await callAI([
-        {
-          role: "system",
-          content: `Generate ${doc_type || "comprehensive"} documentation in Markdown.
-Include: overview, setup, API reference, component docs, examples, troubleshooting.`,
-        },
-        { role: "user", content: codeToDoc },
-      ], false, "google/gemini-2.5-pro");
-
-      return jsonResponse({ success: true, documentation: result });
-    }
-
-    return jsonResponse({ error: `Unknown AI action: ${action}` }, 404);
+    return jsonResponse({ error: `Unknown action: ${action}` }, 404);
   } catch (e) {
     console.error("AI Engine error:", e);
     return jsonResponse({ error: e instanceof Error ? e.message : "Unknown error" }, 500);
