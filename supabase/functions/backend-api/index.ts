@@ -24,8 +24,8 @@ function tryGetSupabase() {
 // === COMPLETE CAPABILITY MAP v6.0 ===
 const CAPABILITY_MAP = {
   service: "TIVO DEV AGENT BACKEND — Autonomous Software Factory",
-  version: "6.0.0",
-  description: "A headless backend engine for autonomous software generation, testing, auditing, native app building, and delivery. Controlled entirely via API with MASTER_SECRET authentication.",
+  version: "7.0.0",
+  description: "A headless backend engine for autonomous software generation, testing, auditing, native app building, image generation, file processing, and delivery. Controlled entirely via API with MASTER_SECRET authentication.",
 
   auth: {
     method: "x-master-secret header",
@@ -72,6 +72,7 @@ const CAPABILITY_MAP = {
       "ai-engine/generate", "ai-engine/review", "ai-engine/fix", "ai-engine/chat",
       "ai-engine/generate-project", "ai-engine/refactor", "ai-engine/convert",
       "ai-engine/generate-api", "ai-engine/generate-docs",
+      "ai-engine/generate-image", "ai-engine/edit-image", "ai-engine/process-file",
       "sandbox/validate", "sandbox/generate-tests", "sandbox/optimize",
       "sandbox/generate-schema", "sandbox/generate-components", "sandbox/analyze-deps",
       "sandbox/code-to-image (code param)", "sandbox/visual-audit (files param)",
@@ -97,6 +98,9 @@ const CAPABILITY_MAP = {
     "ai-engine/convert": { method: "POST", category: "code", db_required: false, description: "কোড কনভার্ট", body: { code: "string (required)", from_language: "string?", to_language: "string?" }, returns: "{ success, converted }" },
     "ai-engine/generate-api": { method: "POST", category: "code", db_required: false, description: "REST API জেনারেশন", body: { description: "string (required)" }, returns: "{ success, api }" },
     "ai-engine/generate-docs": { method: "POST", category: "code", db_required: false, description: "ডকুমেন্টেশন জেনারেশন", body: { code: "string (required)" }, returns: "{ success, documentation }" },
+    "ai-engine/generate-image": { method: "POST", category: "media", db_required: false, description: "🖼️ ইমেজ জেনারেশন (লোগো, ব্যানার, পোস্ট)", when_to_use: "লোগো, ব্যানার, সোশ্যাল মিডিয়া পোস্ট, আইকন তৈরি করতে", body: { prompt: "string (required)", style: "string?", size: "string?", purpose: "'logo'|'banner'|'post'|'icon'?", project_id: "string?", file_name: "string?" }, returns: "{ success, image_base64, stored_url }" },
+    "ai-engine/edit-image": { method: "POST", category: "media", db_required: false, description: "✏️ ইমেজ এডিট", when_to_use: "বিদ্যমান ইমেজ পরিবর্তন করতে", body: { image_url: "string (required — base64 or https)", instruction: "string (required)" }, returns: "{ success, image_base64 }" },
+    "ai-engine/process-file": { method: "POST", category: "media", db_required: false, description: "📁 ফাইল প্রসেসিং (ZIP, ইমেজ, কোড, ডেটা)", when_to_use: "ইউজার ফাইল আপলোড করলে সেটা বিশ্লেষণ করতে", body: { file_content: "string (required — base64 or text)", file_type: "string?", file_name: "string?", instruction: "string?" }, returns: "{ success, analysis }" },
 
     "project-manager/create": { method: "POST", category: "project", db_required: true, description: "নতুন প্রজেক্ট তৈরি", body: { name: "string (required)", description: "string?", user_id: "string?", files: "array?" }, returns: "{ success, project }" },
     "project-manager/list": { method: "GET", category: "project", db_required: true, description: "সব প্রজেক্ট দেখাও", params: "?user_id=string&status=string" },
@@ -171,6 +175,8 @@ const CAPABILITY_MAP = {
       "generate_code": { keywords: ["কোড লিখো", "জেনারেট", "generate", "code", "function"], primary: "ai-engine/generate" },
       "test_code": { keywords: ["টেস্ট", "test", "validate", "ভ্যালিডেট"], primary: "sandbox/validate", alternative: "sandbox/generate-tests" },
       "ui_design": { keywords: ["UI", "ডিজাইন", "design", "layout", "responsive"], primary: "sandbox/visual-audit" },
+      "image_generate": { keywords: ["লোগো", "ব্যানার", "পোস্ট", "ইমেজ", "logo", "banner", "image", "icon", "poster", "thumbnail"], primary: "ai-engine/generate-image", alternative: "ai-engine/edit-image" },
+      "file_process": { keywords: ["ফাইল", "আপলোড", "file", "upload", "zip", "analyze", "বিশ্লেষণ"], primary: "ai-engine/process-file" },
       "manage_project": { keywords: ["প্রজেক্ট", "list", "তালিকা", "আপডেট"], primary: "project-manager/list" },
       "download_deploy": { keywords: ["ডাউনলোড", "download", "ডিপ্লয়", "deploy", "পাবলিশ"], primary: "project-manager/download", alternative: "project-manager/publish" },
       "refactor_convert": { keywords: ["রিফ্যাক্টর", "refactor", "কনভার্ট", "convert"], primary: "ai-engine/refactor", alternative: "ai-engine/convert" },
