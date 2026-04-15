@@ -24,8 +24,8 @@ function tryGetSupabase() {
 // === COMPLETE CAPABILITY MAP v6.0 ===
 const CAPABILITY_MAP = {
   service: "TIVO DEV AGENT BACKEND — Autonomous Software Factory",
-  version: "6.0.0",
-  description: "A headless backend engine for autonomous software generation, testing, auditing, native app building, and delivery. Controlled entirely via API with MASTER_SECRET authentication.",
+  version: "7.0.0",
+  description: "A headless backend engine for autonomous software generation, testing, auditing, native app building, image generation, file processing, and delivery. Controlled entirely via API with MASTER_SECRET authentication.",
 
   auth: {
     method: "x-master-secret header",
