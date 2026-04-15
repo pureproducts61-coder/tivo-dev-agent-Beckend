@@ -62,9 +62,12 @@ function requireSupabase(): { client: any } | { error: Response } {
   return { client: supabase };
 }
 
-async function callAI(messages: any[], stream = false, model = "google/gemini-3-flash-preview") {
+async function callAI(messages: any[], stream = false, model = "google/gemini-3-flash-preview", modalities?: string[]) {
   const LOVABLE_API_KEY = Deno.env.get("LOVABLE_API_KEY");
   if (!LOVABLE_API_KEY) throw new Error("LOVABLE_API_KEY not configured");
+
+  const bodyPayload: any = { model, messages, stream };
+  if (modalities) bodyPayload.modalities = modalities;
 
   const response = await fetch("https://ai.gateway.lovable.dev/v1/chat/completions", {
     method: "POST",
@@ -72,7 +75,7 @@ async function callAI(messages: any[], stream = false, model = "google/gemini-3-
       Authorization: `Bearer ${LOVABLE_API_KEY}`,
       "Content-Type": "application/json",
     },
-    body: JSON.stringify({ model, messages, stream }),
+    body: JSON.stringify(bodyPayload),
   });
 
   if (!response.ok) {
@@ -83,6 +86,11 @@ async function callAI(messages: any[], stream = false, model = "google/gemini-3-
 
   if (stream) return response;
   const data = await response.json();
+  
+  // Handle image responses
+  if (data.choices?.[0]?.message?.images?.length) {
+    return { text: data.choices[0].message.content || "", images: data.choices[0].message.images };
+  }
   return data.choices?.[0]?.message?.content || "";
 }
 
