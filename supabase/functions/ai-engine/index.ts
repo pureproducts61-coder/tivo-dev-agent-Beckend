@@ -670,6 +670,106 @@ Generate 15-40 files. Complete code, no TODOs. TypeScript strict.`,
       return jsonResponse(result);
     }
 
+    // === GENERATE IMAGE (Logo, Banner, Post, etc.) ===
+    if (action === "generate-image") {
+      const { prompt, style, size, purpose } = body;
+      if (!prompt) return jsonResponse({ error: "prompt required" }, 400);
+
+      const enhancedPrompt = `${purpose ? `[${purpose}] ` : ""}${prompt}${style ? `. Style: ${style}` : ""}${size ? `. Dimensions: ${size}` : ""}`;
+      
+      const result = await callAI([
+        { role: "user", content: enhancedPrompt },
+      ], false, "google/gemini-2.5-flash-image", ["image", "text"]);
+
+      if (typeof result === "object" && result.images?.length) {
+        const imageData = result.images[0]?.image_url?.url || null;
+        
+        // Save to storage if project_id provided
+        let storedUrl = null;
+        if (body.project_id && imageData) {
+          const sbResult = requireSupabase();
+          if (!("error" in sbResult)) {
+            const supabase = sbResult.client;
+            const fileName = `${body.file_name || `image_${Date.now()}`}.png`;
+            const base64Data = imageData.replace(/^data:image\/\w+;base64,/, "");
+            const binaryData = Uint8Array.from(atob(base64Data), c => c.charCodeAt(0));
+            await supabase.storage.from("project-files").upload(
+              `${body.project_id}/${fileName}`, binaryData, { contentType: "image/png", upsert: true }
+            ).catch(() => {});
+            storedUrl = `${Deno.env.get("SUPABASE_URL")}/storage/v1/object/public/project-files/${body.project_id}/${fileName}`;
+          }
+        }
+
+        return jsonResponse({
+          success: true,
+          image_base64: imageData,
+          stored_url: storedUrl,
+          description: result.text,
+        });
+      }
+      return jsonResponse({ error: "Image generation failed", raw: typeof result === "string" ? result : null }, 500);
+    }
+
+    // === EDIT IMAGE ===
+    if (action === "edit-image") {
+      const { image_url, instruction } = body;
+      if (!image_url || !instruction) return jsonResponse({ error: "image_url and instruction required" }, 400);
+
+      const result = await callAI([
+        {
+          role: "user",
+          content: [
+            { type: "text", text: instruction },
+            { type: "image_url", image_url: { url: image_url } },
+          ],
+        },
+      ], false, "google/gemini-2.5-flash-image", ["image", "text"]);
+
+      if (typeof result === "object" && result.images?.length) {
+        return jsonResponse({
+          success: true,
+          image_base64: result.images[0]?.image_url?.url || null,
+          description: result.text,
+        });
+      }
+      return jsonResponse({ error: "Image edit failed" }, 500);
+    }
+
+    // === PROCESS FILE (Analyze uploaded files — zip, image, code, etc.) ===
+    if (action === "process-file") {
+      const { file_content, file_type, file_name, instruction } = body;
+      if (!file_content) return jsonResponse({ error: "file_content required (base64 or text)" }, 400);
+
+      const messages: any[] = [
+        {
+          role: "system",
+          content: `You are TIVO DEV AGENT File Processor. Analyze and process uploaded files.
+File: ${file_name || "unknown"} (${file_type || "auto-detect"})
+${instruction || "Analyze this file and provide a detailed summary."}
+If it's code: review, fix, improve. If it's data: extract insights. If it's config: validate and optimize.
+Return structured JSON when possible.`,
+        },
+      ];
+
+      // If it's an image, use multimodal
+      if (file_type?.startsWith("image/") || /\.(png|jpg|jpeg|gif|webp|svg)$/i.test(file_name || "")) {
+        messages.push({
+          role: "user",
+          content: [
+            { type: "text", text: instruction || "Analyze this image" },
+            { type: "image_url", image_url: { url: file_content } },
+          ],
+        });
+      } else {
+        // Text-based file
+        const textContent = file_content.length > 50000 ? file_content.slice(0, 50000) + "\n... (truncated)" : file_content;
+        messages.push({ role: "user", content: textContent });
+      }
+
+      const result = await callAI(messages, false, "google/gemini-2.5-pro");
+      return jsonResponse({ success: true, analysis: typeof result === "string" ? result : result.text || result, file_name });
+    }
+
     return jsonResponse({ error: `Unknown action: ${action}` }, 404);
   } catch (e) {
     console.error("AI Engine error:", e);
