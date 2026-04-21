@@ -1,5 +1,4 @@
-name: Deploy to Hugging Face Space
-
+name: Deploy to Hugging Face
 on:
   push:
     branches: [main]
@@ -9,67 +8,44 @@ jobs:
   deploy:
     runs-on: ubuntu-latest
     steps:
-      - name: Checkout
-        uses: actions/checkout@v4
+      - uses: actions/checkout@v4
         with:
           fetch-depth: 0
 
-      - name: Setup Node
+      - name: Setup Node.js
         uses: actions/setup-node@v4
         with:
-          node-version: 20
-          cache: 'npm'
+          node-version: '20'
+
+      - name: Install Bun
+        uses: oven-sh/setup-bun@v1
 
       - name: Install dependencies
-        run: npm install --legacy-peer-deps
+        run: bun install
 
-      - name: Build Frontend
+      - name: Build project
         env:
-          VITE_HF_TOKEN: ${{ secrets.HF_TOKEN }}
-          VITE_HF_MODEL: ${{ vars.HF_MODEL || 'mistralai/Mistral-7B-Instruct-v0.3' }}
           VITE_SUPABASE_URL: ${{ secrets.VITE_SUPABASE_URL }}
-          VITE_SUPABASE_PUBLISHABLE_KEY: ${{ secrets.VITE_SUPABASE_PUBLISHABLE_KEY }}
-        run: npm run build
+          VITE_SUPABASE_ANON_KEY: ${{ secrets.VITE_SUPABASE_ANON_KEY }}
+          VITE_HF_MODEL: ${{ vars.HF_MODEL }}
+        run: bun run build
 
       - name: Prepare Deployment
         run: |
-          mkdir -p deploy_dir
-          
-          # Copy everything from hf-docker first (Dockerfile, nginx.conf, etc.)
-          if [ -d "hf-docker" ]; then
-            cp -r hf-docker/* deploy_dir/
-          fi
-          
-          # Copy built dist files
-          mkdir -p deploy_dir/dist
-          cp -r dist/* deploy_dir/dist/
-          
-          # Generate Metadata README
-          cat > deploy_dir/README.md << 'EOF'
-          ---
-          title: TIVO DEV AGENT BACKEND
-          emoji: 🤖
-          colorFrom: blue
-          colorTo: indigo
-          sdk: docker
-          app_port: 7860
-          pinned: false
-          ---
+          mkdir -p deploy
+          cp -r dist/* deploy/
+          cp -r hf-docker/* deploy/ || true
+          cp README.md deploy/ || true
 
-          # TIVO DEV AGENT BACKEND — Autonomous AI Development Agent
-          This space hosts the TIVO backend engine and frontend bundle.
-          EOF
-
-      - name: Push to HF Space
+      - name: Push to Hugging Face
         env:
           HF_TOKEN: ${{ secrets.HF_TOKEN }}
           HF_SPACE: ${{ secrets.HF_SPACE }}
         run: |
-          cd deploy_dir
+          cd deploy
           git init
-          git config user.email "github-actions@github.com"
-          git config user.name "GitHub Actions"
+          git config user.name "github-actions[bot]"
+          git config user.email "github-actions[bot]@users.noreply.github.com"
           git add .
-          git commit -m "Deploy: $(date +'%Y-%m-%d %H:%M:%S')"
-          git remote add origin https://x-access-token:${HF_TOKEN}@huggingface.co/spaces/${HF_SPACE}
-          git push --force origin master:main
+          git commit -m "Deploy to HF Space"
+          git push --force https://x-access-token:$HF_TOKEN@huggingface.co/spaces/$HF_SPACE main
