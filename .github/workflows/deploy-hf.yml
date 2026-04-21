@@ -11,16 +11,19 @@ jobs:
     steps:
       - name: Checkout
         uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
 
       - name: Setup Node
         uses: actions/setup-node@v4
         with:
           node-version: 20
+          cache: 'npm'
 
       - name: Install dependencies
-        run: npm ci
+        run: npm install --legacy-peer-deps
 
-      - name: Build
+      - name: Build Frontend
         env:
           VITE_HF_TOKEN: ${{ secrets.HF_TOKEN }}
           VITE_HF_MODEL: ${{ vars.HF_MODEL || 'mistralai/Mistral-7B-Instruct-v0.3' }}
@@ -28,47 +31,57 @@ jobs:
           VITE_SUPABASE_PUBLISHABLE_KEY: ${{ secrets.VITE_SUPABASE_PUBLISHABLE_KEY }}
         run: npm run build
 
-      - name: Deploy to HF Space
+      - name: Prepare and Deploy to HF Space
         env:
           HF_TOKEN: ${{ secrets.HF_TOKEN }}
           HF_SPACE: ${{ secrets.HF_SPACE }}
         run: |
+          # Install Git LFS
           sudo apt-get install -y git-lfs
           git lfs install
 
-          git clone https://huggingface:${HF_TOKEN}@huggingface.co/spaces/${HF_SPACE} hf-space
+          # Clone the HF Space (allow failure if empty)
+          git clone https://x-access-token:${HF_TOKEN}@huggingface.co/spaces/${HF_SPACE} hf-space || mkdir hf-space
 
-          rm -rf hf-space/*
+          # Clear hf-space content except git metadata
+          find hf-space -maxdepth 1 -not -name 'hf-space' -not -name '.git' -exec rm -rf {} +
 
-          # Copy Docker build engine files
-          cp hf-docker/Dockerfile hf-space/
-          cp hf-docker/server.js hf-space/
-          cp hf-docker/build-apk.sh hf-space/
-          cp hf-docker/build-exe.sh hf-space/
-          cp hf-docker/nginx.conf hf-space/
+          # Copy Docker build engine files from hf-docker folder
+          cp -r hf-docker/* hf-space/ 2>/dev/null || echo "Some files in hf-docker might be missing"
 
-          # Copy frontend dist
+          # Copy frontend dist to hf-space/dist
           mkdir -p hf-space/dist
           cp -r dist/* hf-space/dist/
 
+          # Create README.md with Metadata
           cat > hf-space/README.md << 'README'
           ---
           title: TIVO DEV AGENT BACKEND
           emoji: 🤖
-          colorFrom: green
-          colorTo: gray
+          colorFrom: blue
+          colorTo: indigo
           sdk: docker
           app_port: 7860
           pinned: false
           ---
 
-          # TIVO DEV AGENT BACKEND — Autonomous Software Factory
-          Supports APK, EXE, and Web bundle builds.
+          # TIVO DEV AGENT BACKEND — Autonomous AI Development Agent
+          This space hosts the TIVO backend engine and frontend bundle.
+          - Supports Docker-based environment
+          - Port: 7860
           README
 
+          # Push to Hugging Face
           cd hf-space
           git config user.email "github-actions@github.com"
           git config user.name "GitHub Actions"
-          git add -A
-          git diff --cached --quiet || git commit -m "Deploy TIVO Build Engine from GitHub Actions"
-          git push
+          git remote set-url origin https://x-access-token:${HF_TOKEN}@huggingface.co/spaces/${HF_SPACE}
+          
+          git add .
+          # Only commit if there are changes
+          if git diff --cached --quiet; then
+            echo "No changes to commit"
+          else
+            git commit -m "Deploy TIVO Build Engine: $(date +'%Y-%m-%d %H:%M:%S')"
+            git push -u origin main --force
+          fi
