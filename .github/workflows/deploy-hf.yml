@@ -31,30 +31,21 @@ jobs:
           VITE_SUPABASE_PUBLISHABLE_KEY: ${{ secrets.VITE_SUPABASE_PUBLISHABLE_KEY }}
         run: npm run build
 
-      - name: Prepare and Deploy to HF Space
-        env:
-          HF_TOKEN: ${{ secrets.HF_TOKEN }}
-          HF_SPACE: ${{ secrets.HF_SPACE }}
+      - name: Prepare Deployment
         run: |
-          # Install Git LFS
-          sudo apt-get install -y git-lfs
-          git lfs install
-
-          # Clone the HF Space (allow failure if empty)
-          git clone https://x-access-token:${HF_TOKEN}@huggingface.co/spaces/${HF_SPACE} hf-space || mkdir hf-space
-
-          # Clear hf-space content except git metadata
-          find hf-space -maxdepth 1 -not -name 'hf-space' -not -name '.git' -exec rm -rf {} +
-
-          # Copy Docker build engine files from hf-docker folder
-          cp -r hf-docker/* hf-space/ 2>/dev/null || echo "Some files in hf-docker might be missing"
-
-          # Copy frontend dist to hf-space/dist
-          mkdir -p hf-space/dist
-          cp -r dist/* hf-space/dist/
-
-          # Create README.md with Metadata
-          cat > hf-space/README.md << 'README'
+          mkdir -p deploy_dir
+          
+          # Copy everything from hf-docker first (Dockerfile, nginx.conf, etc.)
+          if [ -d "hf-docker" ]; then
+            cp -r hf-docker/* deploy_dir/
+          fi
+          
+          # Copy built dist files
+          mkdir -p deploy_dir/dist
+          cp -r dist/* deploy_dir/dist/
+          
+          # Generate Metadata README
+          cat > deploy_dir/README.md << 'EOF'
           ---
           title: TIVO DEV AGENT BACKEND
           emoji: 🤖
@@ -67,21 +58,18 @@ jobs:
 
           # TIVO DEV AGENT BACKEND — Autonomous AI Development Agent
           This space hosts the TIVO backend engine and frontend bundle.
-          - Supports Docker-based environment
-          - Port: 7860
-          README
+          EOF
 
-          # Push to Hugging Face
-          cd hf-space
+      - name: Push to HF Space
+        env:
+          HF_TOKEN: ${{ secrets.HF_TOKEN }}
+          HF_SPACE: ${{ secrets.HF_SPACE }}
+        run: |
+          cd deploy_dir
+          git init
           git config user.email "github-actions@github.com"
           git config user.name "GitHub Actions"
-          git remote set-url origin https://x-access-token:${HF_TOKEN}@huggingface.co/spaces/${HF_SPACE}
-          
           git add .
-          # Only commit if there are changes
-          if git diff --cached --quiet; then
-            echo "No changes to commit"
-          else
-            git commit -m "Deploy TIVO Build Engine: $(date +'%Y-%m-%d %H:%M:%S')"
-            git push -u origin main --force
-          fi
+          git commit -m "Deploy: $(date +'%Y-%m-%d %H:%M:%S')"
+          git remote add origin https://x-access-token:${HF_TOKEN}@huggingface.co/spaces/${HF_SPACE}
+          git push --force origin master:main
