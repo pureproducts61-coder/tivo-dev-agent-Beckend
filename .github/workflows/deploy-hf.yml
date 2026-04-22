@@ -1,4 +1,5 @@
 name: Deploy to Hugging Face
+
 on:
   push:
     branches: [main]
@@ -11,41 +12,41 @@ jobs:
       - uses: actions/checkout@v4
         with:
           fetch-depth: 0
+          token: ${{ secrets.GITHUB_TOKEN }}
 
-      - name: Setup Node.js
+      - name: Set up Node.js
         uses: actions/setup-node@v4
         with:
-          node-version: '20'
-
-      - name: Install Bun
-        uses: oven-sh/setup-bun@v1
+          node-version: 20
 
       - name: Install dependencies
-        run: bun install
+        run: npm install
 
       - name: Build project
+        run: npm run build
         env:
           VITE_SUPABASE_URL: ${{ secrets.VITE_SUPABASE_URL }}
           VITE_SUPABASE_ANON_KEY: ${{ secrets.VITE_SUPABASE_ANON_KEY }}
-          VITE_HF_MODEL: ${{ vars.HF_MODEL }}
-        run: bun run build
 
-      - name: Prepare Deployment
+      - name: Prepare HF Space Files
         run: |
-          mkdir -p deploy
-          cp -r dist/* deploy/
-          cp -r hf-docker/* deploy/ || true
-          cp README.md deploy/ || true
-
-      - name: Push to Hugging Face
+          mkdir -p hf_sync
+          cp -r dist hf_sync/
+          cp hf-docker/Dockerfile hf_sync/ || cp Dockerfile hf_sync/
+          cp hf-docker/nginx.conf hf_sync/ || echo "No nginx.conf"
+          cp server.js hf_sync/ || echo "No server.js"
+          cp package.json hf_sync/
+          
+      - name: Push to HF
         env:
           HF_TOKEN: ${{ secrets.HF_TOKEN }}
           HF_SPACE: ${{ secrets.HF_SPACE }}
         run: |
-          cd deploy
+          cd hf_sync
           git init
-          git config user.name "github-actions[bot]"
-          git config user.email "github-actions[bot]@users.noreply.github.com"
+          git config user.name "TIVO-AI"
+          git config user.email "tivo@ai.com"
           git add .
-          git commit -m "Deploy to HF Space"
-          git push --force https://x-access-token:$HF_TOKEN@huggingface.co/spaces/$HF_SPACE main
+          git commit -m "Deploy to Hugging Face"
+          git remote add origin https://sheikhrazwan1110:$HF_TOKEN@huggingface.co/spaces/$HF_SPACE
+          git push --force origin master:main
