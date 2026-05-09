@@ -386,13 +386,85 @@ serve(async (req) => {
       });
     }
 
-    // === Auth required from here ===
-    const MASTER_SECRET = Deno.env.get("MASTER_SECRET");
+    // === Auth required from here (Multi-tenant) ===
     const providedSecret = req.headers.get("x-master-secret");
-    if (!MASTER_SECRET || providedSecret !== MASTER_SECRET) return jsonResponse({ error: "Unauthorized" }, 401);
+    const tenant = resolveTenant(providedSecret);
+    if (!tenant) return jsonResponse({ error: "Unauthorized — invalid master secret" }, 401);
 
-    const supabase = tryGetSupabase();
+    const supabase = getActiveSupabase(req);
     const body = req.method !== "GET" ? await req.json().catch(() => ({})) : {};
+
+    // === Tenant Info ===
+    if (action === "tenant-info") {
+      const usingCustomDb = !!(Deno.env.get("CUSTOM_SUPABASE_URL") && Deno.env.get("CUSTOM_SUPABASE_SERVICE_ROLE_KEY"));
+      // Count configured tenants
+      let tenantCount = Deno.env.get("MASTER_SECRET") ? 1 : 0;
+      for (let i = 2; i <= 50; i++) if (Deno.env.get(`MASTER_SECRET_${i}`)) tenantCount++;
+      return jsonResponse({
+        your_tenant_id: tenant.tenantId,
+        total_tenants_configured: tenantCount,
+        custom_database: usingCustomDb,
+        database_active: !!supabase,
+        isolation: "প্রতিটি tenant_id অনুযায়ী ডাটা সম্পূর্ণ আলাদা — অন্য tenant দেখতে পারবে না",
+      });
+    }
+
+    // === Setup Custom DB Schema (auto-migrate) ===
+    if (action === "setup-custom-db" && req.method === "POST") {
+      const targetUrl = body.supabase_url || Deno.env.get("CUSTOM_SUPABASE_URL");
+      const targetKey = body.service_role_key || Deno.env.get("CUSTOM_SUPABASE_SERVICE_ROLE_KEY");
+      if (!targetUrl || !targetKey) {
+        return jsonResponse({
+          error: "Custom DB credentials missing",
+          hint: "Either send {supabase_url, service_role_key} in body, or set CUSTOM_SUPABASE_URL & CUSTOM_SUPABASE_SERVICE_ROLE_KEY env secrets",
+        }, 400);
+      }
+      // Run schema via PostgREST RPC OR direct postgres? Use sql via supabase-js raw? Not available.
+      // Use Supabase Meta API: POST /pg-meta/default/query — only on hosted Supabase requires service_role
+      try {
+        const sqlEndpoint = `${targetUrl.replace(/\/$/, "")}/rest/v1/rpc/exec_sql`;
+        // Try exec_sql RPC first; if not present, return SQL for manual run
+        const r = await fetch(sqlEndpoint, {
+          method: "POST",
+          headers: { "Content-Type": "application/json", "apikey": targetKey, "Authorization": `Bearer ${targetKey}` },
+          body: JSON.stringify({ sql: TENANT_SCHEMA_SQL }),
+        });
+        if (r.ok) {
+          // Optionally migrate existing data
+          if (body.migrate_data) {
+            const src = tryGetSupabase();
+            if (src) {
+              const { data: projs } = await src.from("projects").select("*").limit(1000);
+              if (projs?.length) {
+                const dest = createClient(targetUrl, targetKey);
+                const rows = projs.map((p: any) => ({
+                  tenant_id: tenant.tenantId,
+                  name: p.name, description: p.description,
+                  files: p.files, status: p.status,
+                  build_status: p.build_status, public_url: p.public_url,
+                  installer_url: p.installer_url, build_metadata: p.build_metadata,
+                }));
+                await dest.from("tenant_projects").insert(rows);
+              }
+            }
+          }
+          return jsonResponse({ success: true, schema_applied: true, tenant_id: tenant.tenantId });
+        }
+        // Fallback: return SQL to run manually
+        return jsonResponse({
+          success: false,
+          auto_apply_failed: true,
+          hint: "exec_sql RPC unavailable on target DB. Run the SQL below manually in Supabase SQL Editor.",
+          sql_to_run: TENANT_SCHEMA_SQL,
+        });
+      } catch (e) {
+        return jsonResponse({
+          success: false,
+          error: e instanceof Error ? e.message : String(e),
+          sql_to_run: TENANT_SCHEMA_SQL,
+        }, 500);
+      }
+    }
 
     if (action === "logs" && req.method === "GET") {
       if (!supabase) return jsonResponse({ error: "Database not configured", logs: [] }, 503);
