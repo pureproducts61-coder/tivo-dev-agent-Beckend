@@ -62,9 +62,35 @@ function requireSupabase(): { client: any } | { error: Response } {
   return { client: supabase };
 }
 
+// HF Inference fallback — used when LOVABLE_API_KEY missing or quota hit
+async function callHFInference(messages: any[], model?: string): Promise<string> {
+  const HF_TOKEN = Deno.env.get("HF_INFERENCE_TOKEN") || Deno.env.get("HF_TOKEN");
+  if (!HF_TOKEN) throw new Error("Neither LOVABLE_API_KEY nor HF_INFERENCE_TOKEN configured");
+
+  // Default to a strong open model
+  const hfModel = model || Deno.env.get("HF_DEFAULT_MODEL") || "Qwen/Qwen2.5-Coder-32B-Instruct";
+  const response = await fetch(`https://router.huggingface.co/v1/chat/completions`, {
+    method: "POST",
+    headers: {
+      Authorization: `Bearer ${HF_TOKEN}`,
+      "Content-Type": "application/json",
+    },
+    body: JSON.stringify({ model: hfModel, messages, max_tokens: 4096 }),
+  });
+  if (!response.ok) throw new Error(`HF Inference error: ${response.status} ${await response.text()}`);
+  const data = await response.json();
+  return data.choices?.[0]?.message?.content || "";
+}
+
 async function callAI(messages: any[], stream = false, model = "google/gemini-3-flash-preview", modalities?: string[]) {
   const LOVABLE_API_KEY = Deno.env.get("LOVABLE_API_KEY");
-  if (!LOVABLE_API_KEY) throw new Error("LOVABLE_API_KEY not configured");
+  const HF_TOKEN = Deno.env.get("HF_INFERENCE_TOKEN") || Deno.env.get("HF_TOKEN");
+
+  // If no Lovable key but HF available, use HF (non-stream only)
+  if (!LOVABLE_API_KEY) {
+    if (HF_TOKEN && !stream && !modalities) return await callHFInference(messages);
+    throw new Error("LOVABLE_API_KEY not configured (and no HF fallback available for this request)");
+  }
 
   const bodyPayload: any = { model, messages, stream };
   if (modalities) bodyPayload.modalities = modalities;
@@ -79,6 +105,10 @@ async function callAI(messages: any[], stream = false, model = "google/gemini-3-
   });
 
   if (!response.ok) {
+    // Try HF fallback on Lovable failures (rate-limit / credits / 5xx) for non-stream text-only
+    if (HF_TOKEN && !stream && !modalities && (response.status === 429 || response.status === 402 || response.status >= 500)) {
+      try { return await callHFInference(messages); } catch (_) { /* fall through */ }
+    }
     if (response.status === 429) throw new Error("Rate limited - try again later");
     if (response.status === 402) throw new Error("AI credits exhausted");
     throw new Error(`AI gateway error: ${response.status}`);
@@ -86,7 +116,7 @@ async function callAI(messages: any[], stream = false, model = "google/gemini-3-
 
   if (stream) return response;
   const data = await response.json();
-  
+
   // Handle image responses
   if (data.choices?.[0]?.message?.images?.length) {
     return { text: data.choices[0].message.content || "", images: data.choices[0].message.images };
