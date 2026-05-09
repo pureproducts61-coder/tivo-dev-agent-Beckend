@@ -97,8 +97,31 @@ ALTER TABLE public.tenant_files ENABLE ROW LEVEL SECURITY;
 // === COMPLETE CAPABILITY MAP v6.0 ===
 const CAPABILITY_MAP = {
   service: "TIVO DEV AGENT BACKEND — Autonomous Software Factory",
-  version: "7.0.0",
-  description: "A headless backend engine for autonomous software generation, testing, auditing, native app building, image generation, file processing, and delivery. Controlled entirely via API with MASTER_SECRET authentication.",
+  version: "8.0.0",
+  description: "Multi-tenant headless backend engine. Each MASTER_SECRET = isolated tenant. Supports custom Supabase DB override + HF Inference AI fallback.",
+
+  multi_tenant: {
+    enabled: true,
+    how_it_works: "MASTER_SECRET (tenant_main), MASTER_SECRET_2 (tenant_2), MASTER_SECRET_3 (tenant_3) ... MASTER_SECRET_50. যে ফ্রন্টেন্ড যে secret পাঠাবে সে শুধু সেই tenant_id-এর ডাটা দেখবে।",
+    add_tenant: "Supabase Edge Function Secret-এ MASTER_SECRET_2, MASTER_SECRET_3 ইত্যাদি অ্যাড করো — প্রতিটি ভিন্ন ভ্যালু",
+    isolation: "ডাটাবেইজে প্রতিটি row-তে tenant_id বসে; query-তে অটো ফিল্টার হয়; এক tenant অন্যের ডাটা দেখতে পারে না",
+    check_endpoint: "GET /backend-api/tenant-info — তোমার tenant_id ও মোট কতজন কনফিগার্ড আছে",
+  },
+
+  custom_database: {
+    enabled: true,
+    how_it_works: "ইউজার নিজের Supabase কানেক্ট করতে চাইলে edge function secret-এ CUSTOM_SUPABASE_URL + CUSTOM_SUPABASE_SERVICE_ROLE_KEY সেট করো",
+    auto_setup: "POST /backend-api/setup-custom-db {migrate_data: true} → স্কিমা অটো অ্যাপ্লাই + পুরোনো ডাটা মাইগ্রেট",
+    per_request_override: "headers-এ x-custom-supabase-url ও x-custom-supabase-service-key পাঠালে শুধু সেই request-এ override হবে",
+    fallback_sql: "exec_sql RPC না থাকলে API SQL ফেরত দেবে — manual SQL editor-এ পেস্ট করতে হবে",
+  },
+
+  ai_fallback: {
+    primary: "Lovable AI Gateway (LOVABLE_API_KEY)",
+    fallback: "HF Inference Router — set HF_INFERENCE_TOKEN secret",
+    auto_failover: "Lovable rate-limit / 402 / 5xx হলে অটো HF-এ fallback (text-only, non-stream)",
+    default_hf_model: "Qwen/Qwen2.5-Coder-32B-Instruct (overridable via HF_DEFAULT_MODEL)",
+  },
 
   auth: {
     method: "x-master-secret header",
