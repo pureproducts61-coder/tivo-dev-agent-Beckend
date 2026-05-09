@@ -470,17 +470,20 @@ serve(async (req) => {
       if (!supabase) return jsonResponse({ error: "Database not configured", logs: [] }, 503);
       const limit = parseInt(url.searchParams.get("limit") || "50");
       const actionFilter = url.searchParams.get("action");
-      let query = supabase.from("memory_logs").select("*").order("created_at", { ascending: false }).limit(limit);
+      // Filter by tenant_id stored in details JSONB
+      let query = supabase.from("memory_logs").select("*").order("created_at", { ascending: false }).limit(limit)
+        .eq("details->>tenant_id", tenant.tenantId);
       if (actionFilter) query = query.eq("action", actionFilter);
       const { data, error } = await query;
       if (error) return jsonResponse({ error: error.message }, 500);
-      return jsonResponse({ logs: data });
+      return jsonResponse({ logs: data, tenant_id: tenant.tenantId });
     }
 
     if (action === "log" && req.method === "POST") {
       if (!supabase) return jsonResponse({ error: "Database not configured" }, 503);
-      await supabase.from("memory_logs").insert({ user_id: body.user_id || null, action: body.action || "custom", details: body.details || {} });
-      return jsonResponse({ success: true });
+      const details = { ...(body.details || {}), tenant_id: tenant.tenantId };
+      await supabase.from("memory_logs").insert({ user_id: body.user_id || null, action: body.action || "custom", details });
+      return jsonResponse({ success: true, tenant_id: tenant.tenantId });
     }
 
     if (action === "stats") {
