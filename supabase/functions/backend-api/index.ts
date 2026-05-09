@@ -14,12 +14,85 @@ function jsonResponse(data: any, status = 200) {
   });
 }
 
+// === Multi-tenant + Custom DB resolution ===
+// Supports MASTER_SECRET, MASTER_SECRET_2, MASTER_SECRET_3, ... MASTER_SECRET_N
+// Each secret = isolated tenant. Tenant ID is the secret slot name.
+function resolveTenant(providedSecret: string | null): { tenantId: string } | null {
+  if (!providedSecret) return null;
+  // Check primary
+  if (providedSecret === Deno.env.get("MASTER_SECRET")) return { tenantId: "tenant_main" };
+  // Check numbered slots up to 50
+  for (let i = 2; i <= 50; i++) {
+    const v = Deno.env.get(`MASTER_SECRET_${i}`);
+    if (v && providedSecret === v) return { tenantId: `tenant_${i}` };
+  }
+  return null;
+}
+
+function getActiveSupabase(req: Request) {
+  // Per-request override via headers (advanced)
+  const ovrUrl = req.headers.get("x-custom-supabase-url");
+  const ovrKey = req.headers.get("x-custom-supabase-service-key");
+  if (ovrUrl && ovrKey) return createClient(ovrUrl, ovrKey);
+  // Env-level custom DB override
+  const customUrl = Deno.env.get("CUSTOM_SUPABASE_URL");
+  const customKey = Deno.env.get("CUSTOM_SUPABASE_SERVICE_ROLE_KEY");
+  if (customUrl && customKey) return createClient(customUrl, customKey);
+  // Default Lovable Cloud DB
+  return tryGetSupabase();
+}
+
 function tryGetSupabase() {
   const url = Deno.env.get("SUPABASE_URL");
   const key = Deno.env.get("SUPABASE_SERVICE_ROLE_KEY");
   if (!url || !key) return null;
   return createClient(url, key);
 }
+
+// Schema SQL for auto-setup on custom DB (multi-tenant ready)
+const TENANT_SCHEMA_SQL = `
+-- TIVO DEV AGENT v8.0 — Multi-tenant Schema (idempotent)
+CREATE TABLE IF NOT EXISTS public.tenant_projects (
+  id uuid PRIMARY KEY DEFAULT gen_random_uuid(),
+  tenant_id text NOT NULL,
+  name text NOT NULL,
+  description text DEFAULT '',
+  files jsonb DEFAULT '[]'::jsonb,
+  status text DEFAULT 'active',
+  build_status text DEFAULT 'pending',
+  public_url text DEFAULT '',
+  installer_url text DEFAULT '',
+  build_metadata jsonb DEFAULT '{}'::jsonb,
+  created_at timestamptz DEFAULT now(),
+  updated_at timestamptz DEFAULT now()
+);
+CREATE INDEX IF NOT EXISTS idx_tenant_projects_tenant ON public.tenant_projects(tenant_id);
+
+CREATE TABLE IF NOT EXISTS public.tenant_logs (
+  id uuid PRIMARY KEY DEFAULT gen_random_uuid(),
+  tenant_id text NOT NULL,
+  action text NOT NULL,
+  details jsonb DEFAULT '{}'::jsonb,
+  created_at timestamptz DEFAULT now()
+);
+CREATE INDEX IF NOT EXISTS idx_tenant_logs_tenant ON public.tenant_logs(tenant_id);
+
+CREATE TABLE IF NOT EXISTS public.tenant_files (
+  id uuid PRIMARY KEY DEFAULT gen_random_uuid(),
+  tenant_id text NOT NULL,
+  project_id uuid,
+  path text NOT NULL,
+  content text,
+  metadata jsonb DEFAULT '{}'::jsonb,
+  created_at timestamptz DEFAULT now()
+);
+CREATE INDEX IF NOT EXISTS idx_tenant_files_tenant ON public.tenant_files(tenant_id);
+
+ALTER TABLE public.tenant_projects ENABLE ROW LEVEL SECURITY;
+ALTER TABLE public.tenant_logs ENABLE ROW LEVEL SECURITY;
+ALTER TABLE public.tenant_files ENABLE ROW LEVEL SECURITY;
+-- Service role bypasses RLS; tenant isolation enforced in app code via tenant_id filter
+`;
 
 // === COMPLETE CAPABILITY MAP v6.0 ===
 const CAPABILITY_MAP = {
