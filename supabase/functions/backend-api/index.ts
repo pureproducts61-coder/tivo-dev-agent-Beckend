@@ -333,8 +333,12 @@ serve(async (req) => {
     if (action === "frontend-ai-guide") {
       return jsonResponse({
         guide: {
-          title: "TIVO DEV AGENT — ফ্রন্টেন্ড AI ইন্টিগ্রেশন গাইড v6.0",
-          version: "6.0.0",
+          title: "TIVO DEV AGENT — ফ্রন্টেন্ড AI ইন্টিগ্রেশন গাইড v8.0 (Multi-Tenant)",
+          version: "8.0.0",
+          multi_tenant_note: "এই ব্যাকেন্ড multi-tenant। তুমি যে x-master-secret পাঠাচ্ছ সেটাই তোমার tenant_id ঠিক করে। অন্য tenant-এর ডাটা তুমি কখনো দেখবে না।",
+          custom_db_note: "ইউজার নিজের Supabase কানেক্ট করতে চাইলে: HF/Supabase secret-এ CUSTOM_SUPABASE_URL ও CUSTOM_SUPABASE_SERVICE_ROLE_KEY দাও, তারপর POST /backend-api/setup-custom-db {migrate_data:true} কল করো।",
+          ai_fallback_note: "Lovable AI fail করলে অটো HF Inference-এ fallback হবে যদি HF_INFERENCE_TOKEN সেট থাকে।",
+          must_call_first: ["GET /backend-api/health", "GET /backend-api/capabilities (memory-তে save করো)", "GET /backend-api/tenant-info"],
 
           setup: {
             step_1: "Vercel Environment Variables সেট করো: NEXT_PUBLIC_BACKEND_URL, NEXT_PUBLIC_MASTER_SECRET, NEXT_PUBLIC_HF_SPACE_URL",
