@@ -229,6 +229,8 @@ const CAPABILITY_MAP = {
     "backend-api/stats": { method: "GET", category: "system", db_required: true, description: "পরিসংখ্যান" },
     "backend-api/logs": { method: "GET", category: "system", db_required: true, description: "মেমোরি লগ" },
     "backend-api/log": { method: "POST", category: "system", db_required: true, description: "লগ তৈরি" },
+    "backend-api/tenant-info": { method: "GET", category: "system", auth_required: true, description: "🔐 তোমার tenant_id ও মোট tenant সংখ্যা" },
+    "backend-api/setup-custom-db": { method: "POST", category: "system", auth_required: true, description: "🗄️ কাস্টম Supabase DB-তে স্কিমা অটো-অ্যাপ্লাই + ডাটা মাইগ্রেট", body: { supabase_url: "string?", service_role_key: "string?", migrate_data: "boolean?" } },
     "backend-api/check-connection": { method: "POST", category: "system", db_required: true, description: "কানেকশন টেস্ট" },
   },
 
