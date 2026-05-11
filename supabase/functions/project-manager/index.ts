@@ -83,11 +83,21 @@ serve(async (req) => {
   }
 
   try {
-    const MASTER_SECRET = Deno.env.get("MASTER_SECRET");
+    // === Multi-tenant resolver ===
     const providedSecret = req.headers.get("x-master-secret");
-    if (!MASTER_SECRET || providedSecret !== MASTER_SECRET) {
-      return jsonResponse({ error: "Unauthorized" }, 401);
+    function resolveTenant(s: string | null): string | null {
+      if (!s) return null;
+      if (s === Deno.env.get("MASTER_SECRET")) return "tenant_main";
+      for (let i = 2; i <= 50; i++) {
+        const v = Deno.env.get(`MASTER_SECRET_${i}`);
+        if (v && s === v) return `tenant_${i}`;
+      }
+      if (s === Deno.env.get("SUPER_ADMIN_MASTER_SECRET")) return "super_admin";
+      return null;
     }
+    const tenantId = resolveTenant(providedSecret);
+    if (!tenantId) return jsonResponse({ error: "Unauthorized" }, 401);
+    const isSuperAdmin = tenantId === "super_admin";
 
     let supabase: any;
     try {
@@ -95,6 +105,9 @@ serve(async (req) => {
     } catch (connErr) {
       return jsonResponse({ error: connErr instanceof Error ? connErr.message : "Connection Error", alert: "ADMIN_CONNECTION_ERROR" }, 503);
     }
+
+    // Helper: scope query to current tenant unless super admin
+    const scope = (q: any) => isSuperAdmin ? q : q.eq("tenant_id", tenantId);
 
     const url = new URL(req.url);
     const pathParts = url.pathname.split("/").filter(Boolean);
@@ -104,20 +117,22 @@ serve(async (req) => {
     if (action === "list" && req.method === "GET") {
       const user_id = url.searchParams.get("user_id");
       const status = url.searchParams.get("status");
-      let query = supabase.from("projects").select("id, name, description, status, build_status, public_url, installer_url, created_at, updated_at, build_metadata, version_history").order("updated_at", { ascending: false });
+      let query = supabase.from("projects").select("id, name, description, status, build_status, public_url, installer_url, created_at, updated_at, build_metadata, version_history, tenant_id").order("updated_at", { ascending: false });
+      query = scope(query);
       if (user_id) query = query.eq("user_id", user_id);
       if (status) query = query.eq("status", status);
       const { data, error } = await query;
       if (error) return jsonResponse({ error: error.message }, 500);
-      return jsonResponse({ projects: data });
+      return jsonResponse({ projects: data, tenant_id: tenantId });
     }
 
     // === GET PROJECT ===
     if (action === "get" && req.method === "GET") {
       const id = url.searchParams.get("id");
       if (!id) return jsonResponse({ error: "id required" }, 400);
-      const { data, error } = await supabase.from("projects").select("*").eq("id", id).single();
+      const { data, error } = await scope(supabase.from("projects").select("*").eq("id", id)).maybeSingle();
       if (error) return jsonResponse({ error: error.message }, 500);
+      if (!data) return jsonResponse({ error: "Not found or access denied" }, 404);
       return jsonResponse({ project: data });
     }
 
@@ -125,8 +140,9 @@ serve(async (req) => {
     if (action === "versions" && req.method === "GET") {
       const id = url.searchParams.get("id");
       if (!id) return jsonResponse({ error: "id required" }, 400);
-      const { data, error } = await supabase.from("projects").select("version_history, build_metadata").eq("id", id).single();
+      const { data, error } = await scope(supabase.from("projects").select("version_history, build_metadata").eq("id", id)).maybeSingle();
       if (error) return jsonResponse({ error: error.message }, 500);
+      if (!data) return jsonResponse({ error: "Not found or access denied" }, 404);
       return jsonResponse({ versions: data?.version_history || [], metadata: data?.build_metadata || {} });
     }
 
