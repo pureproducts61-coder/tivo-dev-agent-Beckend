@@ -195,7 +195,7 @@ serve(async (req) => {
 
       // Save version before update if files changed
       if (updates.files) {
-        const { data: current } = await supabase.from("projects").select("version_history, files").eq("id", id).single();
+        const { data: current } = await supabase.from("projects").select("version_history, files").eq("id", id).eq("tenant_id", tenantId).single();
         const history = (current?.version_history as any[]) || [];
         history.push({
           version: history.length + 1,
@@ -220,7 +220,7 @@ serve(async (req) => {
         }
       }
 
-      const { error } = await supabase.from("projects").update(updates).eq("id", id);
+      const { error } = await supabase.from("projects").update(updates).eq("id", id).eq("tenant_id", tenantId);
       if (error) return jsonResponse({ error: error.message }, 500);
       return jsonResponse({ success: true });
     }
@@ -242,7 +242,7 @@ serve(async (req) => {
       }
       await deleteFolder(id);
 
-      const { error } = await supabase.from("projects").delete().eq("id", id);
+      const { error } = await supabase.from("projects").delete().eq("id", id).eq("tenant_id", tenantId);
       if (error) return jsonResponse({ error: error.message }, 500);
       return jsonResponse({ success: true });
     }
@@ -268,7 +268,7 @@ serve(async (req) => {
       }
 
       // Update project files metadata + version
-      const { data: project } = await supabase.from("projects").select("files, version_history").eq("id", project_id).single();
+      const { data: project } = await supabase.from("projects").select("files, version_history").eq("id", project_id).eq("tenant_id", tenantId).single();
       const existingFiles = (project?.files as any[]) || [];
       const newFiles = [...existingFiles];
       for (const r of results) {
@@ -285,7 +285,7 @@ serve(async (req) => {
         files: newFiles,
         build_status: "files_uploaded",
         version_history: history.slice(-50),
-      }).eq("id", project_id);
+      }).eq("id", project_id).eq("tenant_id", tenantId);
 
       return jsonResponse({ success: true, uploads: results });
     }
@@ -301,7 +301,7 @@ serve(async (req) => {
         build_status: "live",
         public_url: publicUrl,
         installer_url: installerUrl,
-      }).eq("id", project_id);
+      }).eq("id", project_id).eq("tenant_id", tenantId);
       return jsonResponse({ success: true, public_url: publicUrl, installer_url: installerUrl });
     }
 
@@ -310,7 +310,7 @@ serve(async (req) => {
       const id = url.searchParams.get("id");
       if (!id) return jsonResponse({ error: "id required" }, 400);
 
-      const { data: project } = await supabase.from("projects").select("*").eq("id", id).single();
+      const { data: project } = await supabase.from("projects").select("*").eq("id", id).eq("tenant_id", tenantId).single();
       if (!project) return jsonResponse({ error: "Project not found" }, 404);
 
       // Get files from storage
@@ -334,7 +334,8 @@ serve(async (req) => {
       // Log download
       await supabase.from("memory_logs").insert({
         action: "project_downloaded",
-        details: { project_id: id, project_name: project.name, file_count: files.length },
+        tenant_id: tenantId,
+        details: { project_id: id, project_name: project.name, file_count: files.length, tenant_id: tenantId },
       });
 
       return jsonResponse({ success: true, bundle });
@@ -344,7 +345,7 @@ serve(async (req) => {
     if (action === "public-url" && req.method === "GET") {
       const id = url.searchParams.get("id");
       if (!id) return jsonResponse({ error: "id required" }, 400);
-      const { data } = await supabase.from("projects").select("public_url, installer_url, status, build_status, build_metadata").eq("id", id).single();
+      const { data } = await supabase.from("projects").select("public_url, installer_url, status, build_status, build_metadata").eq("id", id).eq("tenant_id", tenantId).single();
       if (!data) return jsonResponse({ error: "Project not found" }, 404);
       return jsonResponse(data);
     }
