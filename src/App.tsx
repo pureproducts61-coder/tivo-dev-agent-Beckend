@@ -1,12 +1,21 @@
 import { BrowserRouter, Routes, Route } from "react-router-dom";
 import PublicStatus from "./pages/PublicStatus";
+import SuperAdminLogin from "./pages/SuperAdminLogin";
+import SuperAdminWorkspace from "./pages/SuperAdminWorkspace";
+import TenantOnboarding from "./pages/TenantOnboarding";
+import { SuperAdminProvider } from "./contexts/SuperAdminContext";
 
 const App = () => (
-  <BrowserRouter>
-    <Routes>
-      <Route path="*" element={<PublicStatus />} />
-    </Routes>
-  </BrowserRouter>
+  <SuperAdminProvider>
+    <BrowserRouter>
+      <Routes>
+        <Route path="/super-admin/login" element={<SuperAdminLogin />} />
+        <Route path="/super-admin/workspace" element={<SuperAdminWorkspace />} />
+        <Route path="/tenant-onboarding" element={<TenantOnboarding />} />
+        <Route path="*" element={<PublicStatus />} />
+      </Routes>
+    </BrowserRouter>
+  </SuperAdminProvider>
 );
 
 export default App;
