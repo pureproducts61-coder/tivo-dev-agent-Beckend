@@ -270,11 +270,10 @@ serve(async (req) => {
   try { await acquireSlot(); } catch { return jsonResponse({ error: "Server busy" }, 503); }
 
   try {
-    const MASTER_SECRET = Deno.env.get("MASTER_SECRET");
     const providedSecret = req.headers.get("x-master-secret");
-    if (!MASTER_SECRET || providedSecret !== MASTER_SECRET) {
-      return jsonResponse({ error: "Unauthorized" }, 401);
-    }
+    const tenant = resolveTenant(providedSecret);
+    if (!tenant) return jsonResponse({ error: "Unauthorized" }, 401);
+    const tenantId = tenant.tenantId;
 
     const url = new URL(req.url);
     const pathParts = url.pathname.split("/").filter(Boolean);
