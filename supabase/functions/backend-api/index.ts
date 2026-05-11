@@ -19,13 +19,14 @@ function jsonResponse(data: any, status = 200) {
 // Each secret = isolated tenant. Tenant ID is the secret slot name.
 function resolveTenant(providedSecret: string | null): { tenantId: string } | null {
   if (!providedSecret) return null;
-  // Check primary
   if (providedSecret === Deno.env.get("MASTER_SECRET")) return { tenantId: "tenant_main" };
-  // Check numbered slots up to 50
   for (let i = 2; i <= 50; i++) {
     const v = Deno.env.get(`MASTER_SECRET_${i}`);
     if (v && providedSecret === v) return { tenantId: `tenant_${i}` };
   }
+  // Super admin sees ALL tenants (used for the super admin workspace)
+  const sa = Deno.env.get("SUPER_ADMIN_MASTER_SECRET");
+  if (sa && providedSecret === sa) return { tenantId: "super_admin" };
   return null;
 }
 
