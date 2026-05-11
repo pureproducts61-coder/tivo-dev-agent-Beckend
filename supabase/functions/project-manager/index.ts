@@ -155,6 +155,7 @@ serve(async (req) => {
 
       const { data, error } = await supabase.from("projects").insert({
         user_id: user_id || "system",
+        tenant_id: tenantId,
         name,
         description: description || "",
         repo_url: repo_url || "",
