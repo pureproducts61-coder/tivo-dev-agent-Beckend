@@ -62,6 +62,43 @@ function requireSupabase(): { client: any } | { error: Response } {
   return { client: supabase };
 }
 
+// === Multi-tenant resolver (matches backend-api) ===
+function resolveTenant(providedSecret: string | null): { tenantId: string } | null {
+  if (!providedSecret) return null;
+  if (providedSecret === Deno.env.get("MASTER_SECRET")) return { tenantId: "tenant_main" };
+  for (let i = 2; i <= 50; i++) {
+    const v = Deno.env.get(`MASTER_SECRET_${i}`);
+    if (v && providedSecret === v) return { tenantId: `tenant_${i}` };
+  }
+  // Super admin secret resolves to special tenant id
+  const sa = Deno.env.get("SUPER_ADMIN_MASTER_SECRET");
+  if (sa && providedSecret === sa) return { tenantId: "super_admin" };
+  return null;
+}
+
+// === Google Gemini direct API fallback (when Lovable AI quota exhausted) ===
+async function callGemini(messages: any[]): Promise<string> {
+  const KEY = Deno.env.get("GEMINI_API_KEY");
+  if (!KEY) throw new Error("GEMINI_API_KEY not configured");
+  // Convert chat messages → Gemini format
+  const systemMsg = messages.find((m) => m.role === "system")?.content;
+  const contents = messages
+    .filter((m) => m.role !== "system")
+    .map((m) => ({
+      role: m.role === "assistant" ? "model" : "user",
+      parts: [{ text: typeof m.content === "string" ? m.content : JSON.stringify(m.content) }],
+    }));
+  const body: any = { contents };
+  if (systemMsg) body.systemInstruction = { parts: [{ text: systemMsg }] };
+  const resp = await fetch(
+    `https://generativelanguage.googleapis.com/v1beta/models/gemini-2.0-flash:generateContent?key=${KEY}`,
+    { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(body) }
+  );
+  if (!resp.ok) throw new Error(`Gemini API error: ${resp.status} ${await resp.text()}`);
+  const data = await resp.json();
+  return data.candidates?.[0]?.content?.parts?.map((p: any) => p.text).join("") || "";
+}
+
 // HF Inference fallback — used when LOVABLE_API_KEY missing or quota hit
 async function callHFInference(messages: any[], model?: string): Promise<string> {
   const HF_TOKEN = Deno.env.get("HF_INFERENCE_TOKEN") || Deno.env.get("HF_TOKEN");
