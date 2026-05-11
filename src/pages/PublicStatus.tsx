@@ -79,7 +79,16 @@ const PublicStatus = () => {
   return (
     <main className="min-h-screen bg-zinc-950 text-zinc-100 flex flex-col items-center justify-center px-4 py-8">
       <section className="w-full max-w-2xl space-y-6">
-        {/* Header */}
+        {/* Header with Super Admin button */}
+        <div className="flex items-center justify-between gap-3">
+          <div className="flex-1" />
+          <a
+            href="/super-admin/login"
+            className="px-3 py-1.5 text-xs font-medium rounded-lg border border-amber-700/40 bg-amber-950/30 text-amber-200 hover:bg-amber-900/40 transition-colors"
+          >
+            🔐 Super Admin
+          </a>
+        </div>
         <div className="text-center space-y-2">
           <h1 className="text-2xl sm:text-4xl font-bold tracking-tight">TIVO DEV AGENT</h1>
           <p className="text-sm sm:text-base text-zinc-400">Autonomous Software Factory Engine</p>
@@ -92,6 +101,9 @@ const PublicStatus = () => {
               <span className="text-xs text-zinc-600">v{health.version}</span>
             </div>
           )}
+          <div className="flex items-center justify-center gap-2 pt-2 text-xs">
+            <a href="/tenant-onboarding" className="text-zinc-500 hover:text-zinc-300 underline-offset-4 hover:underline">Tenant Onboarding →</a>
+          </div>
         </div>
 
         {/* Service Status */}
