@@ -517,12 +517,14 @@ serve(async (req) => {
 
     if (action === "stats") {
       if (!supabase) return jsonResponse({ error: "Database not configured", stats: { total_projects: 0, live_projects: 0, total_logs: 0 } }, 503);
+      const isSuperAdmin = tenant.tenantId === "super_admin";
+      const tFilter = (q: any) => isSuperAdmin ? q : q.eq("tenant_id", tenant.tenantId);
       const [projects, logs, liveProjects] = await Promise.all([
-        supabase.from("projects").select("id", { count: "exact", head: true }),
-        supabase.from("memory_logs").select("id", { count: "exact", head: true }),
-        supabase.from("projects").select("id", { count: "exact", head: true }).eq("build_status", "live"),
+        tFilter(supabase.from("projects").select("id", { count: "exact", head: true })),
+        tFilter(supabase.from("memory_logs").select("id", { count: "exact", head: true })),
+        tFilter(supabase.from("projects").select("id", { count: "exact", head: true })).eq("build_status", "live"),
       ]);
-      return jsonResponse({ total_projects: projects.count || 0, live_projects: liveProjects.count || 0, total_logs: logs.count || 0 });
+      return jsonResponse({ total_projects: projects.count || 0, live_projects: liveProjects.count || 0, total_logs: logs.count || 0, tenant_id: tenant.tenantId });
     }
 
     if (action === "check-connection") {
