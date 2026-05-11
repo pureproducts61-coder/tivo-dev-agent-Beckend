@@ -44,6 +44,7 @@ export type Database = {
           created_at: string
           details: Json | null
           id: string
+          tenant_id: string
           user_id: string | null
         }
         Insert: {
@@ -51,6 +52,7 @@ export type Database = {
           created_at?: string
           details?: Json | null
           id?: string
+          tenant_id?: string
           user_id?: string | null
         }
         Update: {
@@ -58,6 +60,7 @@ export type Database = {
           created_at?: string
           details?: Json | null
           id?: string
+          tenant_id?: string
           user_id?: string | null
         }
         Relationships: []
@@ -174,6 +177,7 @@ export type Database = {
           public_url: string | null
           repo_url: string | null
           status: string
+          tenant_id: string
           updated_at: string
           user_id: string
           version_history: Json | null
@@ -191,6 +195,7 @@ export type Database = {
           public_url?: string | null
           repo_url?: string | null
           status?: string
+          tenant_id?: string
           updated_at?: string
           user_id: string
           version_history?: Json | null
@@ -208,6 +213,7 @@ export type Database = {
           public_url?: string | null
           repo_url?: string | null
           status?: string
+          tenant_id?: string
           updated_at?: string
           user_id?: string
           version_history?: Json | null

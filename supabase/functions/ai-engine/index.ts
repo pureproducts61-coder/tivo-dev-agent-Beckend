@@ -62,6 +62,43 @@ function requireSupabase(): { client: any } | { error: Response } {
   return { client: supabase };
 }
 
+// === Multi-tenant resolver (matches backend-api) ===
+function resolveTenant(providedSecret: string | null): { tenantId: string } | null {
+  if (!providedSecret) return null;
+  if (providedSecret === Deno.env.get("MASTER_SECRET")) return { tenantId: "tenant_main" };
+  for (let i = 2; i <= 50; i++) {
+    const v = Deno.env.get(`MASTER_SECRET_${i}`);
+    if (v && providedSecret === v) return { tenantId: `tenant_${i}` };
+  }
+  // Super admin secret resolves to special tenant id
+  const sa = Deno.env.get("SUPER_ADMIN_MASTER_SECRET");
+  if (sa && providedSecret === sa) return { tenantId: "super_admin" };
+  return null;
+}
+
+// === Google Gemini direct API fallback (when Lovable AI quota exhausted) ===
+async function callGemini(messages: any[]): Promise<string> {
+  const KEY = Deno.env.get("GEMINI_API_KEY");
+  if (!KEY) throw new Error("GEMINI_API_KEY not configured");
+  // Convert chat messages → Gemini format
+  const systemMsg = messages.find((m) => m.role === "system")?.content;
+  const contents = messages
+    .filter((m) => m.role !== "system")
+    .map((m) => ({
+      role: m.role === "assistant" ? "model" : "user",
+      parts: [{ text: typeof m.content === "string" ? m.content : JSON.stringify(m.content) }],
+    }));
+  const body: any = { contents };
+  if (systemMsg) body.systemInstruction = { parts: [{ text: systemMsg }] };
+  const resp = await fetch(
+    `https://generativelanguage.googleapis.com/v1beta/models/gemini-2.0-flash:generateContent?key=${KEY}`,
+    { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(body) }
+  );
+  if (!resp.ok) throw new Error(`Gemini API error: ${resp.status} ${await resp.text()}`);
+  const data = await resp.json();
+  return data.candidates?.[0]?.content?.parts?.map((p: any) => p.text).join("") || "";
+}
+
 // HF Inference fallback — used when LOVABLE_API_KEY missing or quota hit
 async function callHFInference(messages: any[], model?: string): Promise<string> {
   const HF_TOKEN = Deno.env.get("HF_INFERENCE_TOKEN") || Deno.env.get("HF_TOKEN");
@@ -85,11 +122,19 @@ async function callHFInference(messages: any[], model?: string): Promise<string>
 async function callAI(messages: any[], stream = false, model = "google/gemini-3-flash-preview", modalities?: string[]) {
   const LOVABLE_API_KEY = Deno.env.get("LOVABLE_API_KEY");
   const HF_TOKEN = Deno.env.get("HF_INFERENCE_TOKEN") || Deno.env.get("HF_TOKEN");
+  const GEMINI_KEY = Deno.env.get("GEMINI_API_KEY");
 
-  // If no Lovable key but HF available, use HF (non-stream only)
+  const tryFallback = async (): Promise<string | null> => {
+    if (stream || modalities) return null;
+    if (GEMINI_KEY) { try { return await callGemini(messages); } catch (_) {} }
+    if (HF_TOKEN)  { try { return await callHFInference(messages); } catch (_) {} }
+    return null;
+  };
+
   if (!LOVABLE_API_KEY) {
-    if (HF_TOKEN && !stream && !modalities) return await callHFInference(messages);
-    throw new Error("LOVABLE_API_KEY not configured (and no HF fallback available for this request)");
+    const fb = await tryFallback();
+    if (fb !== null) return fb;
+    throw new Error("LOVABLE_API_KEY not configured (and no Gemini/HF fallback available for this request)");
   }
 
   const bodyPayload: any = { model, messages, stream };
@@ -97,17 +142,14 @@ async function callAI(messages: any[], stream = false, model = "google/gemini-3-
 
   const response = await fetch("https://ai.gateway.lovable.dev/v1/chat/completions", {
     method: "POST",
-    headers: {
-      Authorization: `Bearer ${LOVABLE_API_KEY}`,
-      "Content-Type": "application/json",
-    },
+    headers: { Authorization: `Bearer ${LOVABLE_API_KEY}`, "Content-Type": "application/json" },
     body: JSON.stringify(bodyPayload),
   });
 
   if (!response.ok) {
-    // Try HF fallback on Lovable failures (rate-limit / credits / 5xx) for non-stream text-only
-    if (HF_TOKEN && !stream && !modalities && (response.status === 429 || response.status === 402 || response.status >= 500)) {
-      try { return await callHFInference(messages); } catch (_) { /* fall through */ }
+    if (response.status === 429 || response.status === 402 || response.status >= 500) {
+      const fb = await tryFallback();
+      if (fb !== null) return fb;
     }
     if (response.status === 429) throw new Error("Rate limited - try again later");
     if (response.status === 402) throw new Error("AI credits exhausted");
@@ -116,8 +158,6 @@ async function callAI(messages: any[], stream = false, model = "google/gemini-3-
 
   if (stream) return response;
   const data = await response.json();
-
-  // Handle image responses
   if (data.choices?.[0]?.message?.images?.length) {
     return { text: data.choices[0].message.content || "", images: data.choices[0].message.images };
   }
@@ -230,11 +270,10 @@ serve(async (req) => {
   try { await acquireSlot(); } catch { return jsonResponse({ error: "Server busy" }, 503); }
 
   try {
-    const MASTER_SECRET = Deno.env.get("MASTER_SECRET");
     const providedSecret = req.headers.get("x-master-secret");
-    if (!MASTER_SECRET || providedSecret !== MASTER_SECRET) {
-      return jsonResponse({ error: "Unauthorized" }, 401);
-    }
+    const tenant = resolveTenant(providedSecret);
+    if (!tenant) return jsonResponse({ error: "Unauthorized" }, 401);
+    const tenantId = tenant.tenantId;
 
     const url = new URL(req.url);
     const pathParts = url.pathname.split("/").filter(Boolean);

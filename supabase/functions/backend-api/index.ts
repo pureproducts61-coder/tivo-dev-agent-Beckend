@@ -19,13 +19,14 @@ function jsonResponse(data: any, status = 200) {
 // Each secret = isolated tenant. Tenant ID is the secret slot name.
 function resolveTenant(providedSecret: string | null): { tenantId: string } | null {
   if (!providedSecret) return null;
-  // Check primary
   if (providedSecret === Deno.env.get("MASTER_SECRET")) return { tenantId: "tenant_main" };
-  // Check numbered slots up to 50
   for (let i = 2; i <= 50; i++) {
     const v = Deno.env.get(`MASTER_SECRET_${i}`);
     if (v && providedSecret === v) return { tenantId: `tenant_${i}` };
   }
+  // Super admin sees ALL tenants (used for the super admin workspace)
+  const sa = Deno.env.get("SUPER_ADMIN_MASTER_SECRET");
+  if (sa && providedSecret === sa) return { tenantId: "super_admin" };
   return null;
 }
 
@@ -415,6 +416,26 @@ serve(async (req) => {
       });
     }
 
+    // === Super Admin verify (no auth header — uses body credentials) ===
+    if (action === "super-admin-verify" && req.method === "POST") {
+      const b = await req.json().catch(() => ({}));
+      const adminEmail = (Deno.env.get("SUPER_ADMIN_MASTER_EMAIL") || "").trim().toLowerCase();
+      const adminSecret = Deno.env.get("SUPER_ADMIN_MASTER_SECRET") || "";
+      if (!adminEmail || !adminSecret) {
+        return jsonResponse({ ok: false, error: "Super admin not configured on backend (set SUPER_ADMIN_MASTER_EMAIL and SUPER_ADMIN_MASTER_SECRET secrets)" }, 503);
+      }
+      const email = (b.email || "").trim().toLowerCase();
+      if (b.method === "google") {
+        if (email && email === adminEmail) return jsonResponse({ ok: true, master_secret: adminSecret, role: "super_admin", email });
+        return jsonResponse({ ok: false, error: "Email not authorized as super admin" }, 403);
+      }
+      if (b.method === "secret") {
+        if (email === adminEmail && b.secret === adminSecret) return jsonResponse({ ok: true, master_secret: adminSecret, role: "super_admin", email });
+        return jsonResponse({ ok: false, error: "Invalid email or secret" }, 401);
+      }
+      return jsonResponse({ ok: false, error: "method must be 'google' or 'secret'" }, 400);
+    }
+
     // === Auth required from here (Multi-tenant) ===
     const providedSecret = req.headers.get("x-master-secret");
     const tenant = resolveTenant(providedSecret);
@@ -517,12 +538,14 @@ serve(async (req) => {
 
     if (action === "stats") {
       if (!supabase) return jsonResponse({ error: "Database not configured", stats: { total_projects: 0, live_projects: 0, total_logs: 0 } }, 503);
+      const isSuperAdmin = tenant.tenantId === "super_admin";
+      const tFilter = (q: any) => isSuperAdmin ? q : q.eq("tenant_id", tenant.tenantId);
       const [projects, logs, liveProjects] = await Promise.all([
-        supabase.from("projects").select("id", { count: "exact", head: true }),
-        supabase.from("memory_logs").select("id", { count: "exact", head: true }),
-        supabase.from("projects").select("id", { count: "exact", head: true }).eq("build_status", "live"),
+        tFilter(supabase.from("projects").select("id", { count: "exact", head: true })),
+        tFilter(supabase.from("memory_logs").select("id", { count: "exact", head: true })),
+        tFilter(supabase.from("projects").select("id", { count: "exact", head: true })).eq("build_status", "live"),
       ]);
-      return jsonResponse({ total_projects: projects.count || 0, live_projects: liveProjects.count || 0, total_logs: logs.count || 0 });
+      return jsonResponse({ total_projects: projects.count || 0, live_projects: liveProjects.count || 0, total_logs: logs.count || 0, tenant_id: tenant.tenantId });
     }
 
     if (action === "check-connection") {
