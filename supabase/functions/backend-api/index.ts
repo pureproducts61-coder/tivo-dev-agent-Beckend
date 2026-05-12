@@ -583,6 +583,7 @@ serve(async (req) => {
       return jsonResponse({ success: true, project_id, status });
     }
 
+    if (action === "check-connection") {
       const checks: any = {};
       if (supabase) {
         const { error: dbErr } = await supabase.from("projects").select("id").limit(1);
