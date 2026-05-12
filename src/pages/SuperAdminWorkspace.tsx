@@ -174,6 +174,7 @@ export default function SuperAdminWorkspace() {
           <div className="text-[10px] text-zinc-500">{session.email}</div>
         </div>
         <div className="flex gap-2">
+          <a href="/super-admin/debug" className="text-xs px-2.5 py-1.5 rounded-md border border-zinc-800 hover:border-amber-700">🔍 Debug</a>
           <a href="/tenant-onboarding" className="text-xs px-2.5 py-1.5 rounded-md border border-zinc-800 hover:border-zinc-600">Tenants</a>
           <button onClick={() => { logout(); nav("/"); }} className="text-xs px-2.5 py-1.5 rounded-md border border-red-900/40 text-red-300 hover:bg-red-950/30">Logout</button>
         </div>
