@@ -64,24 +64,39 @@ export default function TenantOnboarding() {
     ];
     setSteps(initial);
 
-    const setStep = (i: number, status: "running" | "done" | "fail") => {
-      setSteps((s) => s.map((x, j) => j === i ? { ...x, status } : x));
+    const setStep = (i: number, status: "running" | "done" | "fail", labelSuffix?: string) => {
+      setSteps((s) => s.map((x, j) => j === i ? { ...x, status, label: labelSuffix ? `${x.label} ${labelSuffix}` : x.label } : x));
     };
+
+    const MAX_RETRIES = 3;
+    let attempt = 0;
+    let lastData: SetupResult | null = null;
 
     try {
       setStep(0, "done"); setStep(1, "running");
-      const r = await fetch(`${BACKEND}/functions/v1/backend-api/setup-custom-db`, {
-        method: "POST",
-        headers: { "Content-Type": "application/json", "x-master-secret": secret },
-        body: JSON.stringify({
-          supabase_url: supaUrl || undefined,
-          service_role_key: supaKey || undefined,
-          migrate_data: migrate,
-        }),
-      });
-      const data: SetupResult = await r.json();
-      setSetupRes(data);
-      if (data.success) {
+
+      while (attempt < MAX_RETRIES) {
+        attempt++;
+        if (attempt > 1) setStep(1, "running", `(retry ${attempt}/${MAX_RETRIES})`);
+        const r = await fetch(`${BACKEND}/functions/v1/backend-api/setup-custom-db`, {
+          method: "POST",
+          headers: { "Content-Type": "application/json", "x-master-secret": secret },
+          body: JSON.stringify({
+            supabase_url: supaUrl || undefined,
+            service_role_key: supaKey || undefined,
+            migrate_data: migrate,
+          }),
+        });
+        lastData = await r.json();
+        if (lastData?.success) break;
+        // Don't retry validation errors (400 with no auto_apply_failed flag)
+        if (!lastData?.auto_apply_failed && r.status >= 400 && r.status < 500) break;
+        // backoff before retry
+        await new Promise(res => setTimeout(res, 1500 * attempt));
+      }
+
+      setSetupRes(lastData);
+      if (lastData?.success) {
         setStep(1, "done");
         if (migrate) setStep(2, "done");
         setStep(initial.length - 1, "done");
