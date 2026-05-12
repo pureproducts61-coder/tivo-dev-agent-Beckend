@@ -71,7 +71,7 @@ export default function SuperAdminLogin() {
 
           <input
             type="email"
-            placeholder="Email (pureproducts61@gmail.com)"
+            placeholder="Super Admin Email"
             value={email}
             onChange={(e) => setEmail(e.target.value)}
             className="w-full px-3 py-2 rounded-lg bg-zinc-900 border border-zinc-800 text-sm focus:outline-none focus:border-amber-700"

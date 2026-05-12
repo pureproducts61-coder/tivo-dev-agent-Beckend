@@ -211,21 +211,21 @@ export default function SuperAdminWorkspace() {
         )}
       </div>
 
-      {/* Input */}
-      <div className="border-t border-zinc-800 bg-zinc-950 px-3 sm:px-6 py-3 space-y-2">
+      {/* Input — premium mobile-first composer */}
+      <div className="sticky bottom-0 border-t border-zinc-800/80 bg-gradient-to-b from-zinc-950/95 to-zinc-950 backdrop-blur px-2 sm:px-6 pt-2 pb-[max(0.5rem,env(safe-area-inset-bottom))] space-y-2">
         {files.length > 0 && (
-          <div className="flex flex-wrap gap-1.5">
+          <div className="flex flex-wrap gap-1.5 px-1">
             {files.map((f, i) => (
-              <span key={i} className="inline-flex items-center gap-1 text-[11px] bg-zinc-900 border border-zinc-800 rounded-full px-2 py-1">
-                📎 {f.name}
-                <button onClick={() => setFiles(files.filter((_, j) => j !== i))} className="text-zinc-500 hover:text-red-400">×</button>
+              <span key={i} className="inline-flex items-center gap-1.5 text-[11px] bg-zinc-900 border border-zinc-800 rounded-full pl-2 pr-1 py-1">
+                <span className="truncate max-w-[140px]">📎 {f.name}</span>
+                <button onClick={() => setFiles(files.filter((_, j) => j !== i))} className="w-4 h-4 rounded-full bg-zinc-800 hover:bg-red-900/60 text-zinc-400 hover:text-red-300 leading-none flex items-center justify-center">×</button>
               </span>
             ))}
           </div>
         )}
-        <div className="flex items-end gap-2">
-          <label className="cursor-pointer text-zinc-400 hover:text-amber-400 px-2 py-2">
-            📎
+        <div className="relative flex items-end gap-1.5 rounded-3xl bg-zinc-900/90 border border-zinc-800 focus-within:border-amber-700/70 focus-within:ring-2 focus-within:ring-amber-700/20 transition-all shadow-lg shadow-black/30 px-1.5 py-1.5">
+          <label className="cursor-pointer shrink-0 w-10 h-10 rounded-full hover:bg-zinc-800 text-zinc-400 hover:text-amber-400 flex items-center justify-center transition" aria-label="Attach file">
+            <span className="text-lg">📎</span>
             <input
               type="file"
               multiple
@@ -236,18 +236,32 @@ export default function SuperAdminWorkspace() {
           <textarea
             value={input}
             onChange={(e) => setInput(e.target.value)}
-            onKeyDown={(e) => { if (e.key === "Enter" && !e.shiftKey) { e.preventDefault(); send(); } }}
-            placeholder="যা করতে চান লিখুন... (Shift+Enter for newline)"
+            onKeyDown={(e) => { if (e.key === "Enter" && !e.shiftKey && window.innerWidth >= 640) { e.preventDefault(); send(); } }}
+            placeholder="যা করতে চান লিখুন..."
             rows={1}
-            className="flex-1 resize-none bg-zinc-900 border border-zinc-800 rounded-2xl px-4 py-2.5 text-sm focus:outline-none focus:border-amber-700 max-h-32"
+            className="flex-1 resize-none bg-transparent border-0 outline-none px-1 py-2 text-sm placeholder:text-zinc-500 max-h-40 leading-relaxed"
             disabled={streaming}
           />
           {streaming ? (
-            <button onClick={stop} className="px-4 py-2.5 rounded-2xl bg-red-700 hover:bg-red-600 text-white text-sm">Stop</button>
+            <button
+              onClick={stop}
+              aria-label="Stop"
+              className="shrink-0 w-10 h-10 rounded-full bg-red-700 hover:bg-red-600 text-white flex items-center justify-center transition active:scale-95"
+            >
+              <span className="block w-3 h-3 bg-white rounded-sm" />
+            </button>
           ) : (
-            <button onClick={send} disabled={!input.trim() && !files.length} className="px-4 py-2.5 rounded-2xl bg-amber-700 hover:bg-amber-600 text-white text-sm disabled:opacity-40">Send</button>
+            <button
+              onClick={send}
+              disabled={!input.trim() && !files.length}
+              aria-label="Send"
+              className="shrink-0 w-10 h-10 rounded-full bg-gradient-to-br from-amber-500 to-amber-700 hover:from-amber-400 hover:to-amber-600 text-white flex items-center justify-center transition active:scale-95 disabled:opacity-30 disabled:from-zinc-700 disabled:to-zinc-800 shadow-md shadow-amber-900/30"
+            >
+              <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round"><path d="M5 12l14-7-7 14-2-5-5-2z"/></svg>
+            </button>
           )}
         </div>
+        <div className="text-[10px] text-zinc-600 text-center sm:hidden">Tap ➤ to send · Shift+Enter for newline</div>
       </div>
     </main>
   );
