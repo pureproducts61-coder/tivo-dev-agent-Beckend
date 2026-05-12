@@ -3,6 +3,7 @@ import PublicStatus from "./pages/PublicStatus";
 import SuperAdminLogin from "./pages/SuperAdminLogin";
 import SuperAdminWorkspace from "./pages/SuperAdminWorkspace";
 import TenantOnboarding from "./pages/TenantOnboarding";
+import SuperAdminDebug from "./pages/SuperAdminDebug";
 import { SuperAdminProvider } from "./contexts/SuperAdminContext";
 
 const App = () => (
@@ -11,6 +12,7 @@ const App = () => (
       <Routes>
         <Route path="/super-admin/login" element={<SuperAdminLogin />} />
         <Route path="/super-admin/workspace" element={<SuperAdminWorkspace />} />
+        <Route path="/super-admin/debug" element={<SuperAdminDebug />} />
         <Route path="/tenant-onboarding" element={<TenantOnboarding />} />
         <Route path="*" element={<PublicStatus />} />
       </Routes>
