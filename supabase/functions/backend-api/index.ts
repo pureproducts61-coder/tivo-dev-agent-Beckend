@@ -548,7 +548,41 @@ serve(async (req) => {
       return jsonResponse({ total_projects: projects.count || 0, live_projects: liveProjects.count || 0, total_logs: logs.count || 0, tenant_id: tenant.tenantId });
     }
 
-    if (action === "check-connection") {
+    // === Tenant Projects (with kill switch support) ===
+    if (action === "tenant-projects" && req.method === "GET") {
+      if (!supabase) return jsonResponse({ error: "Database not configured", projects: [] }, 503);
+      const isSuperAdmin = tenant.tenantId === "super_admin";
+      let q = supabase.from("projects")
+        .select("id,name,description,build_status,public_url,installer_url,tenant_id,updated_at,created_at")
+        .order("updated_at", { ascending: false }).limit(200);
+      if (!isSuperAdmin) q = q.eq("tenant_id", tenant.tenantId);
+      const { data, error } = await q;
+      if (error) return jsonResponse({ error: error.message }, 500);
+      return jsonResponse({ projects: data || [], tenant_id: tenant.tenantId, super_admin: isSuperAdmin });
+    }
+
+    // === Kill switch — pause/resume/stop a project's build ===
+    if (action === "kill-switch" && req.method === "POST") {
+      if (!supabase) return jsonResponse({ error: "Database not configured" }, 503);
+      const { project_id, status } = body as { project_id?: string; status?: string };
+      if (!project_id || !status) return jsonResponse({ error: "project_id and status required" }, 400);
+      const allowed = ["paused", "stopped", "active", "pending"];
+      if (!allowed.includes(status)) return jsonResponse({ error: `status must be one of ${allowed.join(", ")}` }, 400);
+      const isSuperAdmin = tenant.tenantId === "super_admin";
+      // ownership check
+      let owner = supabase.from("projects").select("id,tenant_id").eq("id", project_id);
+      if (!isSuperAdmin) owner = owner.eq("tenant_id", tenant.tenantId);
+      const { data: row, error: oe } = await owner.maybeSingle();
+      if (oe || !row) return jsonResponse({ error: "Project not found or not yours" }, 404);
+      const { error: ue } = await supabase.from("projects").update({ build_status: status, updated_at: new Date().toISOString() }).eq("id", project_id);
+      if (ue) return jsonResponse({ error: ue.message }, 500);
+      await supabase.from("memory_logs").insert({
+        action: "kill_switch",
+        details: { tenant_id: tenant.tenantId, project_id, new_status: status },
+      });
+      return jsonResponse({ success: true, project_id, status });
+    }
+
       const checks: any = {};
       if (supabase) {
         const { error: dbErr } = await supabase.from("projects").select("id").limit(1);
