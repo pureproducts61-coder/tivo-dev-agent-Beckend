@@ -414,7 +414,9 @@ Complete components with TypeScript, accessibility, dark mode, responsive.`,
       const { package_json, project_id } = body;
       let pkgContent = package_json;
       if (!pkgContent && project_id && supabase) {
-        const { data: project } = await supabase.from("projects").select("files").eq("id", project_id).single();
+        let pjq = supabase.from("projects").select("files,tenant_id").eq("id", project_id);
+        if (tenantId !== "super_admin") pjq = pjq.eq("tenant_id", tenantId);
+        const { data: project } = await pjq.single();
         const pkgFile = (project?.files as any[])?.find((f: any) => f.path === "package.json");
         pkgContent = pkgFile?.content;
       }
