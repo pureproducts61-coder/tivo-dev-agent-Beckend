@@ -629,6 +629,264 @@ serve(async (req) => {
       return jsonResponse({ status: Object.values(checks).every((c: any) => c.status === "ok") ? "all_systems_operational" : "partial", checks });
     }
 
+    // ============================================================
+    // === TIVO Autonomous Architecture v9 ===
+    // memory / proposals / notifications / audit / snapshots / map / security
+    // ============================================================
+    const T = tenant.tenantId;
+    const isSA = T === "super_admin";
+    const tFilter = (q: any) => isSA ? q : q.eq("tenant_id", T);
+    const writeTenant = isSA ? "tenant_main" : T;
+
+    async function notify(level: string, title: string, message: string, metadata: any = {}) {
+      if (!supabase) return;
+      await supabase.from("notifications").insert({ tenant_id: writeTenant, level, title, message, metadata });
+    }
+    async function audit(actor: string, act: string, target: string, details: any = {}) {
+      if (!supabase) return;
+      const ip = req.headers.get("cf-connecting-ip") || req.headers.get("x-forwarded-for") || "";
+      await supabase.from("audit_logs").insert({ tenant_id: writeTenant, actor, action: act, target, details, ip });
+    }
+
+    // --- VECTOR MEMORY ---
+    if (action === "memory/save" && req.method === "POST") {
+      if (!supabase) return jsonResponse({ error: "DB unavailable" }, 503);
+      const { kind = "note", content, metadata = {}, importance = 1 } = body;
+      if (!content) return jsonResponse({ error: "content required" }, 400);
+      // Embedding via Lovable AI Gateway (best-effort; fallback to empty)
+      let embedding: number[] = [];
+      try {
+        const aikey = Deno.env.get("LOVABLE_API_KEY");
+        if (aikey) {
+          const r = await fetch("https://ai.gateway.lovable.dev/v1/embeddings", {
+            method: "POST",
+            headers: { "Content-Type": "application/json", Authorization: `Bearer ${aikey}` },
+            body: JSON.stringify({ model: "google/text-embedding-004", input: String(content).slice(0, 8000) }),
+          });
+          if (r.ok) { const j = await r.json(); embedding = j.data?.[0]?.embedding || []; }
+        }
+      } catch { /* embedding optional */ }
+      const { data, error } = await supabase.from("system_memory").insert({
+        tenant_id: writeTenant, kind, content, embedding, metadata, importance,
+      }).select().single();
+      if (error) return jsonResponse({ error: error.message }, 500);
+      await audit("tivo", "memory_save", data.id, { kind, importance });
+      return jsonResponse({ success: true, id: data.id });
+    }
+    if (action === "memory/search" && (req.method === "POST" || req.method === "GET")) {
+      if (!supabase) return jsonResponse({ error: "DB unavailable" }, 503);
+      const q = body.query || url.searchParams.get("q") || "";
+      const kind = body.kind || url.searchParams.get("kind");
+      let qb = tFilter(supabase.from("system_memory").select("*"))
+        .order("importance", { ascending: false }).order("created_at", { ascending: false }).limit(50);
+      if (kind) qb = qb.eq("kind", kind);
+      if (q) qb = qb.ilike("content", `%${q}%`);
+      const { data, error } = await qb;
+      if (error) return jsonResponse({ error: error.message }, 500);
+      return jsonResponse({ memories: data || [] });
+    }
+
+    // --- PROPOSED CHANGES (Approval workflow) ---
+    if (action === "proposals/create" && req.method === "POST") {
+      if (!supabase) return jsonResponse({ error: "DB unavailable" }, 503);
+      const { title, description = "", change_type = "code", payload = {}, risk_level = "low" } = body;
+      if (!title) return jsonResponse({ error: "title required" }, 400);
+      const { data, error } = await supabase.from("proposed_changes").insert({
+        tenant_id: writeTenant, title, description, change_type, payload, risk_level,
+      }).select().single();
+      if (error) return jsonResponse({ error: error.message }, 500);
+      await notify(risk_level === "high" ? "warn" : "info", "🔔 New Proposed Change", title, { proposal_id: data.id, risk_level });
+      await audit("tivo", "proposal_created", data.id, { title, risk_level });
+      return jsonResponse({ success: true, proposal: data });
+    }
+    if (action === "proposals/list") {
+      if (!supabase) return jsonResponse({ error: "DB unavailable" }, 503);
+      const status = url.searchParams.get("status");
+      let qb = tFilter(supabase.from("proposed_changes").select("*")).order("created_at", { ascending: false }).limit(100);
+      if (status) qb = qb.eq("status", status);
+      const { data, error } = await qb;
+      if (error) return jsonResponse({ error: error.message }, 500);
+      return jsonResponse({ proposals: data || [] });
+    }
+    if (action === "proposals/decide" && req.method === "POST") {
+      if (!isSA) return jsonResponse({ error: "Super Admin only" }, 403);
+      if (!supabase) return jsonResponse({ error: "DB unavailable" }, 503);
+      const { id, decision, edited_payload, note } = body;
+      if (!id || !["approve", "reject", "edit"].includes(decision)) return jsonResponse({ error: "id + decision required" }, 400);
+      const status = decision === "approve" ? "approved" : decision === "reject" ? "rejected" : "edited";
+      const update: any = { status, reviewed_by: "super_admin", reviewed_at: new Date().toISOString() };
+      if (decision === "edit" && edited_payload) update.payload = edited_payload;
+      const { data, error } = await supabase.from("proposed_changes").update(update).eq("id", id).select().single();
+      if (error) return jsonResponse({ error: error.message }, 500);
+      await audit("super_admin", `proposal_${decision}`, id, { note });
+      await notify("info", `Proposal ${decision}d`, data.title, { proposal_id: id });
+      return jsonResponse({ success: true, proposal: data });
+    }
+    if (action === "proposals/apply" && req.method === "POST") {
+      if (!isSA) return jsonResponse({ error: "Super Admin only" }, 403);
+      if (!supabase) return jsonResponse({ error: "DB unavailable" }, 503);
+      const { id } = body;
+      const { data: prop } = await supabase.from("proposed_changes").select("*").eq("id", id).maybeSingle();
+      if (!prop || prop.status !== "approved") return jsonResponse({ error: "Not approved" }, 400);
+      // Snapshot before apply for rollback
+      const snap = await supabase.from("system_snapshots").insert({
+        tenant_id: writeTenant, label: `pre-apply: ${prop.title}`, data: { proposal_id: id, payload: prop.payload }
+      }).select().single();
+      await supabase.from("proposed_changes").update({
+        status: "applied", applied_at: new Date().toISOString(),
+        rollback_data: { snapshot_id: snap.data?.id }
+      }).eq("id", id);
+      await audit("super_admin", "proposal_applied", id, { snapshot: snap.data?.id });
+      await notify("info", "✅ Change Applied", prop.title, { proposal_id: id });
+      return jsonResponse({ success: true, snapshot_id: snap.data?.id });
+    }
+    if (action === "proposals/rollback" && req.method === "POST") {
+      if (!isSA) return jsonResponse({ error: "Super Admin only" }, 403);
+      if (!supabase) return jsonResponse({ error: "DB unavailable" }, 503);
+      const { id } = body;
+      const { data: prop } = await supabase.from("proposed_changes").select("*").eq("id", id).maybeSingle();
+      if (!prop) return jsonResponse({ error: "Not found" }, 404);
+      await supabase.from("proposed_changes").update({ status: "rolled_back" }).eq("id", id);
+      await audit("super_admin", "proposal_rolled_back", id, {});
+      await notify("warn", "↩️ Rolled Back", prop.title, { proposal_id: id });
+      return jsonResponse({ success: true });
+    }
+
+    // --- NOTIFICATIONS ---
+    if (action === "notifications/list") {
+      if (!supabase) return jsonResponse({ error: "DB unavailable" }, 503);
+      const unreadOnly = url.searchParams.get("unread") === "true";
+      let qb = tFilter(supabase.from("notifications").select("*")).order("created_at", { ascending: false }).limit(100);
+      if (unreadOnly) qb = qb.is("read_at", null);
+      const { data, error } = await qb;
+      if (error) return jsonResponse({ error: error.message }, 500);
+      return jsonResponse({ notifications: data || [] });
+    }
+    if (action === "notifications/mark-read" && req.method === "POST") {
+      if (!supabase) return jsonResponse({ error: "DB unavailable" }, 503);
+      const { ids = [], all = false } = body;
+      let q = supabase.from("notifications").update({ read_at: new Date().toISOString() });
+      if (!isSA) q = q.eq("tenant_id", T);
+      if (!all && ids.length) q = q.in("id", ids);
+      else if (!all) return jsonResponse({ error: "ids or all required" }, 400);
+      const { error } = await q.is("read_at", null);
+      if (error) return jsonResponse({ error: error.message }, 500);
+      return jsonResponse({ success: true });
+    }
+
+    // --- AUDIT LOG ---
+    if (action === "audit/list") {
+      if (!supabase) return jsonResponse({ error: "DB unavailable" }, 503);
+      const { data, error } = await tFilter(supabase.from("audit_logs").select("*"))
+        .order("created_at", { ascending: false }).limit(200);
+      if (error) return jsonResponse({ error: error.message }, 500);
+      return jsonResponse({ logs: data || [] });
+    }
+
+    // --- SNAPSHOTS (Recovery points) ---
+    if (action === "snapshots/create" && req.method === "POST") {
+      if (!supabase) return jsonResponse({ error: "DB unavailable" }, 503);
+      const { label = "manual", data = {} } = body;
+      const { data: snap, error } = await supabase.from("system_snapshots")
+        .insert({ tenant_id: writeTenant, label, data }).select().single();
+      if (error) return jsonResponse({ error: error.message }, 500);
+      await audit(isSA ? "super_admin" : "tivo", "snapshot_create", snap.id, { label });
+      return jsonResponse({ success: true, snapshot: snap });
+    }
+    if (action === "snapshots/list") {
+      if (!supabase) return jsonResponse({ error: "DB unavailable" }, 503);
+      const { data, error } = await tFilter(supabase.from("system_snapshots").select("id,label,created_at"))
+        .order("created_at", { ascending: false }).limit(50);
+      if (error) return jsonResponse({ error: error.message }, 500);
+      return jsonResponse({ snapshots: data || [] });
+    }
+
+    // --- SYSTEM MAP (Awareness) ---
+    if (action === "system-map/upsert" && req.method === "POST") {
+      if (!supabase) return jsonResponse({ error: "DB unavailable" }, 503);
+      const items: any[] = body.items || [];
+      if (!Array.isArray(items) || !items.length) return jsonResponse({ error: "items[] required" }, 400);
+      const rows = items.map((i) => ({
+        tenant_id: writeTenant, kind: i.kind, name: i.name, path: i.path || "",
+        metadata: i.metadata || {}, updated_at: new Date().toISOString(),
+      }));
+      const { error } = await supabase.from("system_map").upsert(rows, { onConflict: "tenant_id,kind,name" });
+      if (error) return jsonResponse({ error: error.message }, 500);
+      return jsonResponse({ success: true, count: rows.length });
+    }
+    if (action === "system-map/list") {
+      if (!supabase) return jsonResponse({ error: "DB unavailable" }, 503);
+      const { data, error } = await tFilter(supabase.from("system_map").select("*"))
+        .order("kind").order("name").limit(500);
+      if (error) return jsonResponse({ error: error.message }, 500);
+      return jsonResponse({ map: data || [] });
+    }
+
+    // --- SECURITY EVENTS (Hacker defense log) ---
+    if (action === "security/report" && req.method === "POST") {
+      if (!supabase) return jsonResponse({ error: "DB unavailable" }, 503);
+      const { threat_type, severity = "low", source_ip = "", payload = {}, blocked = true } = body;
+      if (!threat_type) return jsonResponse({ error: "threat_type required" }, 400);
+      const ip = source_ip || req.headers.get("cf-connecting-ip") || req.headers.get("x-forwarded-for") || "";
+      const { data, error } = await supabase.from("security_events")
+        .insert({ tenant_id: writeTenant, threat_type, severity, source_ip: ip, payload, blocked }).select().single();
+      if (error) return jsonResponse({ error: error.message }, 500);
+      await notify(severity === "critical" || severity === "high" ? "error" : "warn",
+        `🛡️ Threat: ${threat_type}`, `Source: ${ip} • ${blocked ? "BLOCKED" : "DETECTED"}`, { event_id: data.id });
+      return jsonResponse({ success: true, id: data.id });
+    }
+    if (action === "security/events") {
+      if (!supabase) return jsonResponse({ error: "DB unavailable" }, 503);
+      const { data, error } = await tFilter(supabase.from("security_events").select("*"))
+        .order("created_at", { ascending: false }).limit(200);
+      if (error) return jsonResponse({ error: error.message }, 500);
+      return jsonResponse({ events: data || [] });
+    }
+
+    // --- SYSTEM REPORT (Full overview for Super Admin / TIVO context) ---
+    if (action === "system-report") {
+      if (!supabase) return jsonResponse({ error: "DB unavailable" }, 503);
+      const [proj, mem, prop, notif, sec, snap, mapd, audit_] = await Promise.all([
+        tFilter(supabase.from("projects").select("id,name,build_status,tenant_id,updated_at").order("updated_at", { ascending: false }).limit(20)),
+        tFilter(supabase.from("system_memory").select("id,kind,content,importance,created_at").order("importance", { ascending: false }).limit(20)),
+        tFilter(supabase.from("proposed_changes").select("id,title,status,risk_level,created_at").order("created_at", { ascending: false }).limit(20)),
+        tFilter(supabase.from("notifications").select("id,level,title,read_at,created_at").order("created_at", { ascending: false }).limit(20)),
+        tFilter(supabase.from("security_events").select("id,threat_type,severity,blocked,created_at").order("created_at", { ascending: false }).limit(20)),
+        tFilter(supabase.from("system_snapshots").select("id,label,created_at").order("created_at", { ascending: false }).limit(10)),
+        tFilter(supabase.from("system_map").select("kind,name,path").limit(200)),
+        tFilter(supabase.from("audit_logs").select("id,actor,action,target,created_at").order("created_at", { ascending: false }).limit(30)),
+      ]);
+      // Capability flags
+      const capabilities = {
+        vector_memory: true,
+        github_dual_sync: !!Deno.env.get("GITHUB_TOKEN"),
+        worker_queue: !!Deno.env.get("INNGEST_API_KEY") || !!Deno.env.get("WORKER_QUEUE_URL"),
+        multi_server_deploy: !!Deno.env.get("HF_SPACE_URL") || !!Deno.env.get("DEPLOY_TARGETS"),
+        ai_gateway: !!Deno.env.get("LOVABLE_API_KEY"),
+        master_secrets_loaded: (() => { let n = 1; for (let i = 2; i <= 50; i++) if (Deno.env.get(`MASTER_SECRET_${i}`)) n++; return n; })(),
+      };
+      return jsonResponse({
+        tenant_id: T,
+        timestamp: new Date().toISOString(),
+        capabilities,
+        recent: {
+          projects: proj.data || [],
+          memories: mem.data || [],
+          proposals: prop.data || [],
+          notifications: notif.data || [],
+          security_events: sec.data || [],
+          snapshots: snap.data || [],
+          system_map: mapd.data || [],
+          audit_logs: audit_.data || [],
+        },
+        counts: {
+          unread_notifications: (notif.data || []).filter((n: any) => !n.read_at).length,
+          pending_proposals: (prop.data || []).filter((p: any) => p.status === "pending").length,
+          recent_threats: (sec.data || []).length,
+        },
+      });
+    }
+
     return jsonResponse({ error: `Unknown action: ${action}` }, 404);
   } catch (e) {
     console.error("Backend API error:", e);
