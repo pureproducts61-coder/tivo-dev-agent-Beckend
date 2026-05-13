@@ -649,11 +649,13 @@ Fix ALL remaining issues. Return JSON: {"score":0-100,"fixed_files":[{"path":"st
 
       const buildResult = await hfResponse.json();
 
-      await supabase.from("projects").update({
+      let updQ = supabase.from("projects").update({
         build_status: `${build_type}_built`,
         build_metadata: { ...((project.build_metadata as any) || {}), native_build: buildResult },
         installer_url: buildResult.download_url ? `${hfUrl}${buildResult.download_url}` : project.installer_url,
       }).eq("id", project_id);
+      if (tenantId !== "super_admin") updQ = updQ.eq("tenant_id", tenantId);
+      await updQ;
 
       await supabase.from("memory_logs").insert({
         action: "native_build",
