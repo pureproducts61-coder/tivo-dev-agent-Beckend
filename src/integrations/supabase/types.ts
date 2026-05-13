@@ -14,6 +14,39 @@ export type Database = {
   }
   public: {
     Tables: {
+      audit_logs: {
+        Row: {
+          action: string
+          actor: string
+          created_at: string
+          details: Json
+          id: string
+          ip: string | null
+          target: string | null
+          tenant_id: string
+        }
+        Insert: {
+          action: string
+          actor?: string
+          created_at?: string
+          details?: Json
+          id?: string
+          ip?: string | null
+          target?: string | null
+          tenant_id?: string
+        }
+        Update: {
+          action?: string
+          actor?: string
+          created_at?: string
+          details?: Json
+          id?: string
+          ip?: string | null
+          target?: string | null
+          tenant_id?: string
+        }
+        Relationships: []
+      }
       conversations: {
         Row: {
           created_at: string
@@ -99,6 +132,39 @@ export type Database = {
             referencedColumns: ["id"]
           },
         ]
+      }
+      notifications: {
+        Row: {
+          created_at: string
+          id: string
+          level: string
+          message: string
+          metadata: Json
+          read_at: string | null
+          tenant_id: string
+          title: string
+        }
+        Insert: {
+          created_at?: string
+          id?: string
+          level?: string
+          message?: string
+          metadata?: Json
+          read_at?: string | null
+          tenant_id?: string
+          title: string
+        }
+        Update: {
+          created_at?: string
+          id?: string
+          level?: string
+          message?: string
+          metadata?: Json
+          read_at?: string | null
+          tenant_id?: string
+          title?: string
+        }
+        Relationships: []
       }
       payments: {
         Row: {
@@ -217,6 +283,174 @@ export type Database = {
           updated_at?: string
           user_id?: string
           version_history?: Json | null
+        }
+        Relationships: []
+      }
+      proposed_changes: {
+        Row: {
+          applied_at: string | null
+          change_type: string
+          created_at: string
+          description: string
+          id: string
+          payload: Json
+          reviewed_at: string | null
+          reviewed_by: string | null
+          risk_level: string
+          rollback_data: Json | null
+          status: string
+          tenant_id: string
+          title: string
+        }
+        Insert: {
+          applied_at?: string | null
+          change_type?: string
+          created_at?: string
+          description?: string
+          id?: string
+          payload?: Json
+          reviewed_at?: string | null
+          reviewed_by?: string | null
+          risk_level?: string
+          rollback_data?: Json | null
+          status?: string
+          tenant_id?: string
+          title: string
+        }
+        Update: {
+          applied_at?: string | null
+          change_type?: string
+          created_at?: string
+          description?: string
+          id?: string
+          payload?: Json
+          reviewed_at?: string | null
+          reviewed_by?: string | null
+          risk_level?: string
+          rollback_data?: Json | null
+          status?: string
+          tenant_id?: string
+          title?: string
+        }
+        Relationships: []
+      }
+      security_events: {
+        Row: {
+          blocked: boolean
+          created_at: string
+          id: string
+          payload: Json
+          severity: string
+          source_ip: string | null
+          tenant_id: string
+          threat_type: string
+        }
+        Insert: {
+          blocked?: boolean
+          created_at?: string
+          id?: string
+          payload?: Json
+          severity?: string
+          source_ip?: string | null
+          tenant_id?: string
+          threat_type: string
+        }
+        Update: {
+          blocked?: boolean
+          created_at?: string
+          id?: string
+          payload?: Json
+          severity?: string
+          source_ip?: string | null
+          tenant_id?: string
+          threat_type?: string
+        }
+        Relationships: []
+      }
+      system_map: {
+        Row: {
+          id: string
+          kind: string
+          metadata: Json
+          name: string
+          path: string | null
+          tenant_id: string
+          updated_at: string
+        }
+        Insert: {
+          id?: string
+          kind: string
+          metadata?: Json
+          name: string
+          path?: string | null
+          tenant_id?: string
+          updated_at?: string
+        }
+        Update: {
+          id?: string
+          kind?: string
+          metadata?: Json
+          name?: string
+          path?: string | null
+          tenant_id?: string
+          updated_at?: string
+        }
+        Relationships: []
+      }
+      system_memory: {
+        Row: {
+          content: string
+          created_at: string
+          embedding: Json | null
+          id: string
+          importance: number
+          kind: string
+          metadata: Json
+          tenant_id: string
+        }
+        Insert: {
+          content: string
+          created_at?: string
+          embedding?: Json | null
+          id?: string
+          importance?: number
+          kind?: string
+          metadata?: Json
+          tenant_id?: string
+        }
+        Update: {
+          content?: string
+          created_at?: string
+          embedding?: Json | null
+          id?: string
+          importance?: number
+          kind?: string
+          metadata?: Json
+          tenant_id?: string
+        }
+        Relationships: []
+      }
+      system_snapshots: {
+        Row: {
+          created_at: string
+          data: Json
+          id: string
+          label: string
+          tenant_id: string
+        }
+        Insert: {
+          created_at?: string
+          data?: Json
+          id?: string
+          label: string
+          tenant_id?: string
+        }
+        Update: {
+          created_at?: string
+          data?: Json
+          id?: string
+          label?: string
+          tenant_id?: string
         }
         Relationships: []
       }
