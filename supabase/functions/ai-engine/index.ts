@@ -472,7 +472,9 @@ CRITICAL RULES:
       let projectFiles: any;
       let projectName: string;
       if (project_id) {
-        const { data: project } = await supabase.from("projects").select("*").eq("id", project_id).single();
+        let pq = supabase.from("projects").select("*").eq("id", project_id);
+        if (tenantId !== "super_admin") pq = pq.eq("tenant_id", tenantId);
+        const { data: project } = await pq.single();
         if (!project) return jsonResponse({ error: "Project not found" }, 404);
         projectFiles = project.files;
         projectName = project.name;
