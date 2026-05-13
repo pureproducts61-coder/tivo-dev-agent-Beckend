@@ -720,7 +720,7 @@ Generate 15-40 files. Complete code, no TODOs. TypeScript strict.`,
       }
 
       // Step 2: Native build if requested
-      if (build_type && hf_space_url && saved?.id) {
+      if (build_type && hf_space_url && isSafeHfSpaceUrl(hf_space_url) && saved?.id) {
         try {
           const endpoint = build_type === "apk" ? "/api/build-apk" : "/api/build-exe";
           const hfUrl = hf_space_url.replace(/\/$/, "");
