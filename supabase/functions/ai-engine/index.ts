@@ -616,6 +616,7 @@ Fix ALL remaining issues. Return JSON: {"score":0-100,"fixed_files":[{"path":"st
       const { project_id, build_type, hf_space_url, app_name, package_name } = body;
       if (!project_id || !build_type) return jsonResponse({ error: "project_id and build_type required" }, 400);
       if (!hf_space_url) return jsonResponse({ error: "hf_space_url required — HF Space URL where Docker build engine is deployed" }, 400);
+      if (!isSafeHfSpaceUrl(hf_space_url)) return jsonResponse({ error: "Invalid hf_space_url — must be https://<space>.hf.space" }, 400);
 
       const sbResult = requireSupabase();
       if ("error" in sbResult) return sbResult.error;
