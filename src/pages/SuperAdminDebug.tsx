@@ -32,9 +32,11 @@ const STATUS_COLOR: Record<string, string> = {
 
 export default function SuperAdminDebug() {
   const { session } = useSuperAdmin();
-  const [secret, setSecret] = useState(
-    () => session?.masterSecret || localStorage.getItem("tivo_master_secret") || ""
-  );
+  const [secret, setSecret] = useState(() => {
+    // Clean any legacy localStorage copy on mount
+    try { localStorage.removeItem("tivo_master_secret"); } catch {}
+    return session?.masterSecret || sessionStorage.getItem("tivo_master_secret") || "";
+  });
   const [logs, setLogs] = useState<LogRow[]>([]);
   const [projects, setProjects] = useState<ProjectRow[]>([]);
   const [tab, setTab] = useState<"logs" | "projects">("projects");
