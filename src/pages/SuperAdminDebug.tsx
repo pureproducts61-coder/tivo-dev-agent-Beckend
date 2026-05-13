@@ -66,7 +66,7 @@ export default function SuperAdminDebug() {
       if (!pr.ok) throw new Error(pd.error || "projects failed");
       setLogs(ld.logs || []);
       setProjects(pd.projects || []);
-      localStorage.setItem("tivo_master_secret", secret);
+      sessionStorage.setItem("tivo_master_secret", secret);
     } catch (e: any) {
       setErr(e.message);
     } finally {
