@@ -432,15 +432,31 @@ serve(async (req) => {
       const adminEmail = (Deno.env.get("SUPER_ADMIN_MASTER_EMAIL") || "").trim().toLowerCase();
       const adminSecret = Deno.env.get("SUPER_ADMIN_MASTER_SECRET") || "";
       if (!adminEmail || !adminSecret) {
-        return jsonResponse({ ok: false, error: "Super admin not configured on backend (set SUPER_ADMIN_MASTER_EMAIL and SUPER_ADMIN_MASTER_SECRET secrets)" }, 503);
+        return jsonResponse({ ok: false, error: "Super admin not configured" }, 503);
       }
-      const email = (b.email || "").trim().toLowerCase();
       if (b.method === "google") {
-        if (email && email === adminEmail) return jsonResponse({ ok: true, master_secret: adminSecret, role: "super_admin", email });
-        return jsonResponse({ ok: false, error: "Email not authorized as super admin" }, 403);
+        // Require a verified Supabase access token; never trust caller-supplied email
+        const accessToken = (b.access_token || "").trim();
+        if (!accessToken) return jsonResponse({ ok: false, error: "access_token required" }, 401);
+        const supaUrl = Deno.env.get("SUPABASE_URL");
+        const supaAnon = Deno.env.get("SUPABASE_ANON_KEY") || Deno.env.get("SUPABASE_PUBLISHABLE_KEY");
+        if (!supaUrl || !supaAnon) return jsonResponse({ ok: false, error: "Auth not configured" }, 503);
+        const verifyClient = createClient(supaUrl, supaAnon);
+        const { data: userData, error: userErr } = await verifyClient.auth.getUser(accessToken);
+        if (userErr || !userData?.user?.email) {
+          return jsonResponse({ ok: false, error: "Invalid session token" }, 401);
+        }
+        const verifiedEmail = userData.user.email.trim().toLowerCase();
+        if (verifiedEmail !== adminEmail) {
+          return jsonResponse({ ok: false, error: "Email not authorized as super admin" }, 403);
+        }
+        return jsonResponse({ ok: true, master_secret: adminSecret, role: "super_admin", email: verifiedEmail });
       }
       if (b.method === "secret") {
-        if (email === adminEmail && b.secret === adminSecret) return jsonResponse({ ok: true, master_secret: adminSecret, role: "super_admin", email });
+        const email = (b.email || "").trim().toLowerCase();
+        if (email === adminEmail && b.secret === adminSecret) {
+          return jsonResponse({ ok: true, master_secret: adminSecret, role: "super_admin", email });
+        }
         return jsonResponse({ ok: false, error: "Invalid email or secret" }, 401);
       }
       return jsonResponse({ ok: false, error: "method must be 'google' or 'secret'" }, 400);
