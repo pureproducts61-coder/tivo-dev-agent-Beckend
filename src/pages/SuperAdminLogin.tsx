@@ -13,13 +13,13 @@ export default function SuperAdminLogin() {
   const [busy, setBusy] = useState(false);
   const [err, setErr] = useState<string | null>(null);
 
-  async function verify(method: "secret" | "google", emailVal: string, secretVal?: string) {
+  async function verify(method: "secret" | "google", emailVal: string, secretVal?: string, accessToken?: string) {
     setBusy(true); setErr(null);
     try {
       const r = await fetch(`${BACKEND}/functions/v1/backend-api/super-admin-verify`, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ method, email: emailVal, secret: secretVal }),
+        body: JSON.stringify({ method, email: emailVal, secret: secretVal, access_token: accessToken }),
       });
       const data = await r.json();
       if (!r.ok || !data.ok) throw new Error(data.error || "Login failed");
@@ -34,7 +34,7 @@ export default function SuperAdminLogin() {
 
   async function handleGoogle() {
     setBusy(true); setErr(null);
-    const { data, error } = await supabase.auth.signInWithOAuth({
+    const { error } = await supabase.auth.signInWithOAuth({
       provider: "google",
       options: { redirectTo: `${window.location.origin}/super-admin/login` },
     });
@@ -42,11 +42,12 @@ export default function SuperAdminLogin() {
     // After redirect, useEffect below handles session
   }
 
-  // After Google redirect: pick up email and verify
+  // After Google redirect: pick up Supabase session and verify with access_token
   useState(() => {
     supabase.auth.getSession().then(({ data }) => {
       const userEmail = data.session?.user?.email;
-      if (userEmail && !err) verify("google", userEmail);
+      const accessToken = data.session?.access_token;
+      if (userEmail && accessToken && !err) verify("google", userEmail, undefined, accessToken);
     });
   });
 

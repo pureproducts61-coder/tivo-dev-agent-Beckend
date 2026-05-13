@@ -21,7 +21,17 @@ interface SetupResult {
 }
 
 export default function TenantOnboarding() {
-  const [secret, setSecret] = useState(() => localStorage.getItem("tivo_master_secret") || "");
+  const [secret, setSecret] = useState(() => {
+    // Migrate any prior localStorage value into sessionStorage and remove it
+    try {
+      const old = localStorage.getItem("tivo_master_secret");
+      if (old) {
+        sessionStorage.setItem("tivo_master_secret", old);
+        localStorage.removeItem("tivo_master_secret");
+      }
+    } catch {}
+    return sessionStorage.getItem("tivo_master_secret") || "";
+  });
   const [info, setInfo] = useState<TenantInfo | null>(null);
   const [loading, setLoading] = useState(false);
   const [errInfo, setErrInfo] = useState<string | null>(null);
@@ -44,7 +54,7 @@ export default function TenantOnboarding() {
       const data = await r.json();
       if (!r.ok) throw new Error(data.error || "Failed");
       setInfo(data);
-      localStorage.setItem("tivo_master_secret", secret);
+      sessionStorage.setItem("tivo_master_secret", secret);
     } catch (e: any) {
       setErrInfo(e.message);
     } finally {

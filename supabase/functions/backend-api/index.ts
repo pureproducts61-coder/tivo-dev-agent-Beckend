@@ -30,15 +30,29 @@ function resolveTenant(providedSecret: string | null): { tenantId: string } | nu
   return null;
 }
 
+// SSRF guard: only allow https://<sub>.supabase.co URLs (or known custom self-hosted via env allowlist)
+const SUPABASE_URL_RE = /^https:\/\/[a-z0-9-]+\.supabase\.(co|in)$/i;
+export function isSafeSupabaseUrl(u: string | null | undefined): boolean {
+  if (!u) return false;
+  try {
+    const parsed = new URL(u);
+    if (parsed.protocol !== "https:") return false;
+    return SUPABASE_URL_RE.test(`${parsed.protocol}//${parsed.host}`);
+  } catch { return false; }
+}
+
 function getActiveSupabase(req: Request) {
-  // Per-request override via headers (advanced)
-  const ovrUrl = req.headers.get("x-custom-supabase-url");
-  const ovrKey = req.headers.get("x-custom-supabase-service-key");
-  if (ovrUrl && ovrKey) return createClient(ovrUrl, ovrKey);
-  // Env-level custom DB override
+  // Per-request override via headers — only honored when an explicit allowlist env var permits it
+  const allowOverride = Deno.env.get("ALLOW_PER_REQUEST_DB_OVERRIDE") === "true";
+  if (allowOverride) {
+    const ovrUrl = req.headers.get("x-custom-supabase-url");
+    const ovrKey = req.headers.get("x-custom-supabase-service-key");
+    if (ovrUrl && ovrKey && isSafeSupabaseUrl(ovrUrl)) return createClient(ovrUrl, ovrKey);
+  }
+  // Env-level custom DB override (operator-controlled, trusted)
   const customUrl = Deno.env.get("CUSTOM_SUPABASE_URL");
   const customKey = Deno.env.get("CUSTOM_SUPABASE_SERVICE_ROLE_KEY");
-  if (customUrl && customKey) return createClient(customUrl, customKey);
+  if (customUrl && customKey && isSafeSupabaseUrl(customUrl)) return createClient(customUrl, customKey);
   // Default Lovable Cloud DB
   return tryGetSupabase();
 }
@@ -299,7 +313,7 @@ serve(async (req) => {
     const pathParts = url.pathname.split("/").filter(Boolean);
     const action = pathParts[pathParts.length - 1] || "";
 
-    // === Health (no auth, no DB required) ===
+    // === Health (no auth, no DB required) — generic statuses only, no error message leakage ===
     if (action === "health") {
       let dbStatus = "not_configured";
       let storageStatus = "not_configured";
@@ -307,9 +321,9 @@ serve(async (req) => {
       if (supabase) {
         try {
           const { error } = await supabase.from("projects").select("id").limit(1);
-          dbStatus = error ? `error: ${error.message}` : "connected";
+          dbStatus = error ? "error" : "connected";
           const { error: se } = await supabase.storage.from("project-files").list("", { limit: 1 });
-          storageStatus = se ? `error: ${se.message}` : "connected";
+          storageStatus = se ? "error" : "connected";
         } catch { dbStatus = "error"; storageStatus = "error"; }
       }
 
@@ -319,10 +333,6 @@ serve(async (req) => {
         version: CAPABILITY_MAP.version,
         database: dbStatus,
         storage: storageStatus,
-        ai_gateway: Deno.env.get("LOVABLE_API_KEY") ? "configured" : "missing",
-        master_secret: Deno.env.get("MASTER_SECRET") ? "configured" : "missing",
-        total_endpoints: Object.keys(CAPABILITY_MAP.endpoints).length,
-        ai_only_mode: dbStatus !== "connected",
         timestamp: new Date().toISOString(),
       });
     }
@@ -422,15 +432,31 @@ serve(async (req) => {
       const adminEmail = (Deno.env.get("SUPER_ADMIN_MASTER_EMAIL") || "").trim().toLowerCase();
       const adminSecret = Deno.env.get("SUPER_ADMIN_MASTER_SECRET") || "";
       if (!adminEmail || !adminSecret) {
-        return jsonResponse({ ok: false, error: "Super admin not configured on backend (set SUPER_ADMIN_MASTER_EMAIL and SUPER_ADMIN_MASTER_SECRET secrets)" }, 503);
+        return jsonResponse({ ok: false, error: "Super admin not configured" }, 503);
       }
-      const email = (b.email || "").trim().toLowerCase();
       if (b.method === "google") {
-        if (email && email === adminEmail) return jsonResponse({ ok: true, master_secret: adminSecret, role: "super_admin", email });
-        return jsonResponse({ ok: false, error: "Email not authorized as super admin" }, 403);
+        // Require a verified Supabase access token; never trust caller-supplied email
+        const accessToken = (b.access_token || "").trim();
+        if (!accessToken) return jsonResponse({ ok: false, error: "access_token required" }, 401);
+        const supaUrl = Deno.env.get("SUPABASE_URL");
+        const supaAnon = Deno.env.get("SUPABASE_ANON_KEY") || Deno.env.get("SUPABASE_PUBLISHABLE_KEY");
+        if (!supaUrl || !supaAnon) return jsonResponse({ ok: false, error: "Auth not configured" }, 503);
+        const verifyClient = createClient(supaUrl, supaAnon);
+        const { data: userData, error: userErr } = await verifyClient.auth.getUser(accessToken);
+        if (userErr || !userData?.user?.email) {
+          return jsonResponse({ ok: false, error: "Invalid session token" }, 401);
+        }
+        const verifiedEmail = userData.user.email.trim().toLowerCase();
+        if (verifiedEmail !== adminEmail) {
+          return jsonResponse({ ok: false, error: "Email not authorized as super admin" }, 403);
+        }
+        return jsonResponse({ ok: true, master_secret: adminSecret, role: "super_admin", email: verifiedEmail });
       }
       if (b.method === "secret") {
-        if (email === adminEmail && b.secret === adminSecret) return jsonResponse({ ok: true, master_secret: adminSecret, role: "super_admin", email });
+        const email = (b.email || "").trim().toLowerCase();
+        if (email === adminEmail && b.secret === adminSecret) {
+          return jsonResponse({ ok: true, master_secret: adminSecret, role: "super_admin", email });
+        }
         return jsonResponse({ ok: false, error: "Invalid email or secret" }, 401);
       }
       return jsonResponse({ ok: false, error: "method must be 'google' or 'secret'" }, 400);
@@ -468,6 +494,10 @@ serve(async (req) => {
           error: "Custom DB credentials missing",
           hint: "Either send {supabase_url, service_role_key} in body, or set CUSTOM_SUPABASE_URL & CUSTOM_SUPABASE_SERVICE_ROLE_KEY env secrets",
         }, 400);
+      }
+      // SSRF guard — only allow legitimate Supabase project URLs
+      if (!isSafeSupabaseUrl(targetUrl)) {
+        return jsonResponse({ error: "Invalid supabase_url — must be https://<project>.supabase.co" }, 400);
       }
       // Run schema via PostgREST RPC OR direct postgres? Use sql via supabase-js raw? Not available.
       // Use Supabase Meta API: POST /pg-meta/default/query — only on hosted Supabase requires service_role

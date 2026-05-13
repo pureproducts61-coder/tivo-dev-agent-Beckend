@@ -7,6 +7,17 @@ const corsHeaders = {
   "Access-Control-Allow-Methods": "POST, OPTIONS",
 };
 
+// SSRF guard for HF Space URLs — only allow https://*.hf.space hosts
+const HF_SPACE_RE = /^https:\/\/[a-zA-Z0-9-]+(?:-[a-zA-Z0-9-]+)*\.hf\.space$/;
+function isSafeHfSpaceUrl(u: string | null | undefined): boolean {
+  if (!u) return false;
+  try {
+    const p = new URL(u);
+    if (p.protocol !== "https:") return false;
+    return HF_SPACE_RE.test(`${p.protocol}//${p.host}`);
+  } catch { return false; }
+}
+
 // === RATE LIMITER ===
 const rateLimitStore = new Map<string, { count: number; resetAt: number }>();
 const RATE_LIMIT = { maxRequests: 30, windowMs: 60_000 };
@@ -605,6 +616,7 @@ Fix ALL remaining issues. Return JSON: {"score":0-100,"fixed_files":[{"path":"st
       const { project_id, build_type, hf_space_url, app_name, package_name } = body;
       if (!project_id || !build_type) return jsonResponse({ error: "project_id and build_type required" }, 400);
       if (!hf_space_url) return jsonResponse({ error: "hf_space_url required — HF Space URL where Docker build engine is deployed" }, 400);
+      if (!isSafeHfSpaceUrl(hf_space_url)) return jsonResponse({ error: "Invalid hf_space_url — must be https://<space>.hf.space" }, 400);
 
       const sbResult = requireSupabase();
       if ("error" in sbResult) return sbResult.error;
@@ -708,7 +720,7 @@ Generate 15-40 files. Complete code, no TODOs. TypeScript strict.`,
       }
 
       // Step 2: Native build if requested
-      if (build_type && hf_space_url && saved?.id) {
+      if (build_type && hf_space_url && isSafeHfSpaceUrl(hf_space_url) && saved?.id) {
         try {
           const endpoint = build_type === "apk" ? "/api/build-apk" : "/api/build-exe";
           const hfUrl = hf_space_url.replace(/\/$/, "");
