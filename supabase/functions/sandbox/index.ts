@@ -89,11 +89,18 @@ serve(async (req) => {
   try { await acquireSlot(); clearTimeout(queueTimeout); } catch { clearTimeout(queueTimeout); return jsonResponse({ error: "Server busy" }, 503); }
 
   try {
-    const MASTER_SECRET = Deno.env.get("MASTER_SECRET");
     const providedSecret = req.headers.get("x-master-secret");
-    if (!MASTER_SECRET || providedSecret !== MASTER_SECRET) {
-      return jsonResponse({ error: "Unauthorized" }, 401);
+    // Resolve tenant from MASTER_SECRET (tenant_main), MASTER_SECRET_2..50, or SUPER_ADMIN_MASTER_SECRET
+    let tenantId: string | null = null;
+    if (providedSecret && providedSecret === Deno.env.get("MASTER_SECRET")) tenantId = "tenant_main";
+    if (!tenantId && providedSecret) {
+      for (let i = 2; i <= 50; i++) {
+        const v = Deno.env.get(`MASTER_SECRET_${i}`);
+        if (v && providedSecret === v) { tenantId = `tenant_${i}`; break; }
+      }
     }
+    if (!tenantId && providedSecret && providedSecret === Deno.env.get("SUPER_ADMIN_MASTER_SECRET")) tenantId = "super_admin";
+    if (!tenantId) return jsonResponse({ error: "Unauthorized" }, 401);
 
     // Supabase is optional — only needed for project_id lookups
     const supabase = tryGetSupabase();
