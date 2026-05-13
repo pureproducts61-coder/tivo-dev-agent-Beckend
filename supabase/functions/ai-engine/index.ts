@@ -625,7 +625,9 @@ Fix ALL remaining issues. Return JSON: {"score":0-100,"fixed_files":[{"path":"st
       if ("error" in sbResult) return sbResult.error;
       const supabase = sbResult.client;
 
-      const { data: project } = await supabase.from("projects").select("*").eq("id", project_id).single();
+      let bnq = supabase.from("projects").select("*").eq("id", project_id);
+      if (tenantId !== "super_admin") bnq = bnq.eq("tenant_id", tenantId);
+      const { data: project } = await bnq.single();
       if (!project) return jsonResponse({ error: "Project not found" }, 404);
 
       const files = (project.files as any[]) || [];
