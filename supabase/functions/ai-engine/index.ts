@@ -574,6 +574,7 @@ Fix ALL remaining issues. Return JSON: {"score":0-100,"fixed_files":[{"path":"st
       // Step 5: Save to DB
       const { data: saved } = await supabase.from("projects").insert({
         user_id: user_id || "system",
+        tenant_id: tenantId === "super_admin" ? "tenant_main" : tenantId,
         name: projectName,
         description: description || "",
         files: finalFiles,
