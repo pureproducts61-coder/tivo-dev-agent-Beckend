@@ -311,7 +311,10 @@ serve(async (req) => {
   try {
     const url = new URL(req.url);
     const pathParts = url.pathname.split("/").filter(Boolean);
-    const action = pathParts[pathParts.length - 1] || "";
+    const fnIdx = pathParts.indexOf("backend-api");
+    const action = fnIdx >= 0 && pathParts.length > fnIdx + 1
+      ? pathParts.slice(fnIdx + 1).join("/")
+      : pathParts[pathParts.length - 1] || "";
 
     // === Health (no auth, no DB required) — generic statuses only, no error message leakage ===
     if (action === "health") {
