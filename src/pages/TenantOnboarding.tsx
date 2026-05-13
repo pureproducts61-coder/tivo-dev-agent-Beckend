@@ -54,7 +54,7 @@ export default function TenantOnboarding() {
       const data = await r.json();
       if (!r.ok) throw new Error(data.error || "Failed");
       setInfo(data);
-      localStorage.setItem("tivo_master_secret", secret);
+      sessionStorage.setItem("tivo_master_secret", secret);
     } catch (e: any) {
       setErrInfo(e.message);
     } finally {
