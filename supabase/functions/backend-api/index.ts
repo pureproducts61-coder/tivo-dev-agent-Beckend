@@ -495,6 +495,10 @@ serve(async (req) => {
           hint: "Either send {supabase_url, service_role_key} in body, or set CUSTOM_SUPABASE_URL & CUSTOM_SUPABASE_SERVICE_ROLE_KEY env secrets",
         }, 400);
       }
+      // SSRF guard — only allow legitimate Supabase project URLs
+      if (!isSafeSupabaseUrl(targetUrl)) {
+        return jsonResponse({ error: "Invalid supabase_url — must be https://<project>.supabase.co" }, 400);
+      }
       // Run schema via PostgREST RPC OR direct postgres? Use sql via supabase-js raw? Not available.
       // Use Supabase Meta API: POST /pg-meta/default/query — only on hosted Supabase requires service_role
       try {
