@@ -313,7 +313,7 @@ serve(async (req) => {
     const pathParts = url.pathname.split("/").filter(Boolean);
     const action = pathParts[pathParts.length - 1] || "";
 
-    // === Health (no auth, no DB required) ===
+    // === Health (no auth, no DB required) — generic statuses only, no error message leakage ===
     if (action === "health") {
       let dbStatus = "not_configured";
       let storageStatus = "not_configured";
@@ -321,9 +321,9 @@ serve(async (req) => {
       if (supabase) {
         try {
           const { error } = await supabase.from("projects").select("id").limit(1);
-          dbStatus = error ? `error: ${error.message}` : "connected";
+          dbStatus = error ? "error" : "connected";
           const { error: se } = await supabase.storage.from("project-files").list("", { limit: 1 });
-          storageStatus = se ? `error: ${se.message}` : "connected";
+          storageStatus = se ? "error" : "connected";
         } catch { dbStatus = "error"; storageStatus = "error"; }
       }
 
@@ -333,10 +333,6 @@ serve(async (req) => {
         version: CAPABILITY_MAP.version,
         database: dbStatus,
         storage: storageStatus,
-        ai_gateway: Deno.env.get("LOVABLE_API_KEY") ? "configured" : "missing",
-        master_secret: Deno.env.get("MASTER_SECRET") ? "configured" : "missing",
-        total_endpoints: Object.keys(CAPABILITY_MAP.endpoints).length,
-        ai_only_mode: dbStatus !== "connected",
         timestamp: new Date().toISOString(),
       });
     }
