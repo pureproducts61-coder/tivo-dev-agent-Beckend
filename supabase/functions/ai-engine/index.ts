@@ -7,6 +7,17 @@ const corsHeaders = {
   "Access-Control-Allow-Methods": "POST, OPTIONS",
 };
 
+// SSRF guard for HF Space URLs — only allow https://*.hf.space hosts
+const HF_SPACE_RE = /^https:\/\/[a-zA-Z0-9-]+(?:-[a-zA-Z0-9-]+)*\.hf\.space$/;
+function isSafeHfSpaceUrl(u: string | null | undefined): boolean {
+  if (!u) return false;
+  try {
+    const p = new URL(u);
+    if (p.protocol !== "https:") return false;
+    return HF_SPACE_RE.test(`${p.protocol}//${p.host}`);
+  } catch { return false; }
+}
+
 // === RATE LIMITER ===
 const rateLimitStore = new Map<string, { count: number; resetAt: number }>();
 const RATE_LIMIT = { maxRequests: 30, windowMs: 60_000 };
