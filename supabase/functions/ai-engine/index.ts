@@ -703,6 +703,7 @@ Generate 15-40 files. Complete code, no TODOs. TypeScript strict.`,
       // Save to DB
       const { data: saved } = await supabase.from("projects").insert({
         user_id: user_id || "system",
+        tenant_id: tenantId === "super_admin" ? "tenant_main" : tenantId,
         name: projectName,
         description,
         files: projectData.files,
