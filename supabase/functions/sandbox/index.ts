@@ -359,7 +359,9 @@ Include RLS policies, indexes, foreign keys, seed data.`,
       if (!project_id) return jsonResponse({ error: "project_id required" }, 400);
       if (!supabase) return jsonResponse({ error: "Database required for deploy-automation" }, 503);
 
-      const { data: project } = await supabase.from("projects").select("*").eq("id", project_id).single();
+      let dpq = supabase.from("projects").select("*").eq("id", project_id);
+      if (tenantId !== "super_admin") dpq = dpq.eq("tenant_id", tenantId);
+      const { data: project } = await dpq.single();
       if (!project) return jsonResponse({ error: "Project not found" }, 404);
 
       const files = (project.files as any[]) || [];
