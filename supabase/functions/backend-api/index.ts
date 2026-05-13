@@ -30,15 +30,29 @@ function resolveTenant(providedSecret: string | null): { tenantId: string } | nu
   return null;
 }
 
+// SSRF guard: only allow https://<sub>.supabase.co URLs (or known custom self-hosted via env allowlist)
+const SUPABASE_URL_RE = /^https:\/\/[a-z0-9-]+\.supabase\.(co|in)$/i;
+export function isSafeSupabaseUrl(u: string | null | undefined): boolean {
+  if (!u) return false;
+  try {
+    const parsed = new URL(u);
+    if (parsed.protocol !== "https:") return false;
+    return SUPABASE_URL_RE.test(`${parsed.protocol}//${parsed.host}`);
+  } catch { return false; }
+}
+
 function getActiveSupabase(req: Request) {
-  // Per-request override via headers (advanced)
-  const ovrUrl = req.headers.get("x-custom-supabase-url");
-  const ovrKey = req.headers.get("x-custom-supabase-service-key");
-  if (ovrUrl && ovrKey) return createClient(ovrUrl, ovrKey);
-  // Env-level custom DB override
+  // Per-request override via headers — only honored when an explicit allowlist env var permits it
+  const allowOverride = Deno.env.get("ALLOW_PER_REQUEST_DB_OVERRIDE") === "true";
+  if (allowOverride) {
+    const ovrUrl = req.headers.get("x-custom-supabase-url");
+    const ovrKey = req.headers.get("x-custom-supabase-service-key");
+    if (ovrUrl && ovrKey && isSafeSupabaseUrl(ovrUrl)) return createClient(ovrUrl, ovrKey);
+  }
+  // Env-level custom DB override (operator-controlled, trusted)
   const customUrl = Deno.env.get("CUSTOM_SUPABASE_URL");
   const customKey = Deno.env.get("CUSTOM_SUPABASE_SERVICE_ROLE_KEY");
-  if (customUrl && customKey) return createClient(customUrl, customKey);
+  if (customUrl && customKey && isSafeSupabaseUrl(customUrl)) return createClient(customUrl, customKey);
   // Default Lovable Cloud DB
   return tryGetSupabase();
 }
