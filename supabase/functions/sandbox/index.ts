@@ -89,11 +89,18 @@ serve(async (req) => {
   try { await acquireSlot(); clearTimeout(queueTimeout); } catch { clearTimeout(queueTimeout); return jsonResponse({ error: "Server busy" }, 503); }
 
   try {
-    const MASTER_SECRET = Deno.env.get("MASTER_SECRET");
     const providedSecret = req.headers.get("x-master-secret");
-    if (!MASTER_SECRET || providedSecret !== MASTER_SECRET) {
-      return jsonResponse({ error: "Unauthorized" }, 401);
+    // Resolve tenant from MASTER_SECRET (tenant_main), MASTER_SECRET_2..50, or SUPER_ADMIN_MASTER_SECRET
+    let tenantId: string | null = null;
+    if (providedSecret && providedSecret === Deno.env.get("MASTER_SECRET")) tenantId = "tenant_main";
+    if (!tenantId && providedSecret) {
+      for (let i = 2; i <= 50; i++) {
+        const v = Deno.env.get(`MASTER_SECRET_${i}`);
+        if (v && providedSecret === v) { tenantId = `tenant_${i}`; break; }
+      }
     }
+    if (!tenantId && providedSecret && providedSecret === Deno.env.get("SUPER_ADMIN_MASTER_SECRET")) tenantId = "super_admin";
+    if (!tenantId) return jsonResponse({ error: "Unauthorized" }, 401);
 
     // Supabase is optional — only needed for project_id lookups
     const supabase = tryGetSupabase();
@@ -336,7 +343,9 @@ Include RLS policies, indexes, foreign keys, seed data.`,
 
       const schema = parseJsonFromAI(result);
       if (schema && body.project_id && supabase) {
-        await supabase.from("projects").update({ build_metadata: { database_schema: schema } }).eq("id", body.project_id).catch(() => {});
+        let uq = supabase.from("projects").update({ build_metadata: { database_schema: schema } }).eq("id", body.project_id);
+        if (tenantId !== "super_admin") uq = uq.eq("tenant_id", tenantId);
+        await uq.catch(() => {});
       }
       if (supabase) {
         await supabase.from("memory_logs").insert({ action: "schema_generated", details: { description, tables_count: schema?.tables?.length || 0 } }).catch(() => {});
@@ -350,7 +359,9 @@ Include RLS policies, indexes, foreign keys, seed data.`,
       if (!project_id) return jsonResponse({ error: "project_id required" }, 400);
       if (!supabase) return jsonResponse({ error: "Database required for deploy-automation" }, 503);
 
-      const { data: project } = await supabase.from("projects").select("*").eq("id", project_id).single();
+      let dpq = supabase.from("projects").select("*").eq("id", project_id);
+      if (tenantId !== "super_admin") dpq = dpq.eq("tenant_id", tenantId);
+      const { data: project } = await dpq.single();
       if (!project) return jsonResponse({ error: "Project not found" }, 404);
 
       const files = (project.files as any[]) || [];
@@ -372,7 +383,9 @@ Return JSON: {"target":"${target}","config_files":[{"path":"string","content":"s
           const idx = updatedFiles.findIndex((f: any) => f.path === cf.path);
           if (idx >= 0) updatedFiles[idx] = cf; else updatedFiles.push(cf);
         }
-        await supabase.from("projects").update({ files: updatedFiles }).eq("id", project_id).catch(() => {});
+        let fuq = supabase.from("projects").update({ files: updatedFiles }).eq("id", project_id);
+        if (tenantId !== "super_admin") fuq = fuq.eq("tenant_id", tenantId);
+        await fuq.catch(() => {});
       }
 
       return jsonResponse({ success: true, deployment: deployConfig || { raw: result } });
@@ -401,7 +414,9 @@ Complete components with TypeScript, accessibility, dark mode, responsive.`,
       const { package_json, project_id } = body;
       let pkgContent = package_json;
       if (!pkgContent && project_id && supabase) {
-        const { data: project } = await supabase.from("projects").select("files").eq("id", project_id).single();
+        let pjq = supabase.from("projects").select("files,tenant_id").eq("id", project_id);
+        if (tenantId !== "super_admin") pjq = pjq.eq("tenant_id", tenantId);
+        const { data: project } = await pjq.single();
         const pkgFile = (project?.files as any[])?.find((f: any) => f.path === "package.json");
         pkgContent = pkgFile?.content;
       }

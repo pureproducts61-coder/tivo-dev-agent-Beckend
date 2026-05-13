@@ -472,7 +472,9 @@ CRITICAL RULES:
       let projectFiles: any;
       let projectName: string;
       if (project_id) {
-        const { data: project } = await supabase.from("projects").select("*").eq("id", project_id).single();
+        let pq = supabase.from("projects").select("*").eq("id", project_id);
+        if (tenantId !== "super_admin") pq = pq.eq("tenant_id", tenantId);
+        const { data: project } = await pq.single();
         if (!project) return jsonResponse({ error: "Project not found" }, 404);
         projectFiles = project.files;
         projectName = project.name;
@@ -572,6 +574,7 @@ Fix ALL remaining issues. Return JSON: {"score":0-100,"fixed_files":[{"path":"st
       // Step 5: Save to DB
       const { data: saved } = await supabase.from("projects").insert({
         user_id: user_id || "system",
+        tenant_id: tenantId === "super_admin" ? "tenant_main" : tenantId,
         name: projectName,
         description: description || "",
         files: finalFiles,
@@ -622,7 +625,9 @@ Fix ALL remaining issues. Return JSON: {"score":0-100,"fixed_files":[{"path":"st
       if ("error" in sbResult) return sbResult.error;
       const supabase = sbResult.client;
 
-      const { data: project } = await supabase.from("projects").select("*").eq("id", project_id).single();
+      let bnq = supabase.from("projects").select("*").eq("id", project_id);
+      if (tenantId !== "super_admin") bnq = bnq.eq("tenant_id", tenantId);
+      const { data: project } = await bnq.single();
       if (!project) return jsonResponse({ error: "Project not found" }, 404);
 
       const files = (project.files as any[]) || [];
@@ -644,11 +649,13 @@ Fix ALL remaining issues. Return JSON: {"score":0-100,"fixed_files":[{"path":"st
 
       const buildResult = await hfResponse.json();
 
-      await supabase.from("projects").update({
+      let updQ = supabase.from("projects").update({
         build_status: `${build_type}_built`,
         build_metadata: { ...((project.build_metadata as any) || {}), native_build: buildResult },
         installer_url: buildResult.download_url ? `${hfUrl}${buildResult.download_url}` : project.installer_url,
       }).eq("id", project_id);
+      if (tenantId !== "super_admin") updQ = updQ.eq("tenant_id", tenantId);
+      await updQ;
 
       await supabase.from("memory_logs").insert({
         action: "native_build",
@@ -696,6 +703,7 @@ Generate 15-40 files. Complete code, no TODOs. TypeScript strict.`,
       // Save to DB
       const { data: saved } = await supabase.from("projects").insert({
         user_id: user_id || "system",
+        tenant_id: tenantId === "super_admin" ? "tenant_main" : tenantId,
         name: projectName,
         description,
         files: projectData.files,
