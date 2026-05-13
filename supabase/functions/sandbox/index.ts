@@ -383,7 +383,9 @@ Return JSON: {"target":"${target}","config_files":[{"path":"string","content":"s
           const idx = updatedFiles.findIndex((f: any) => f.path === cf.path);
           if (idx >= 0) updatedFiles[idx] = cf; else updatedFiles.push(cf);
         }
-        await supabase.from("projects").update({ files: updatedFiles }).eq("id", project_id).catch(() => {});
+        let fuq = supabase.from("projects").update({ files: updatedFiles }).eq("id", project_id);
+        if (tenantId !== "super_admin") fuq = fuq.eq("tenant_id", tenantId);
+        await fuq.catch(() => {});
       }
 
       return jsonResponse({ success: true, deployment: deployConfig || { raw: result } });
