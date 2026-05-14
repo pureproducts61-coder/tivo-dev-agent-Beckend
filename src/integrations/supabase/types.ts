@@ -367,6 +367,39 @@ export type Database = {
         }
         Relationships: []
       }
+      system_credentials: {
+        Row: {
+          created_at: string
+          description: string
+          id: string
+          is_active: boolean
+          key_name: string
+          tenant_id: string
+          updated_at: string
+          value: string
+        }
+        Insert: {
+          created_at?: string
+          description?: string
+          id?: string
+          is_active?: boolean
+          key_name: string
+          tenant_id?: string
+          updated_at?: string
+          value?: string
+        }
+        Update: {
+          created_at?: string
+          description?: string
+          id?: string
+          is_active?: boolean
+          key_name?: string
+          tenant_id?: string
+          updated_at?: string
+          value?: string
+        }
+        Relationships: []
+      }
       system_map: {
         Row: {
           id: string
