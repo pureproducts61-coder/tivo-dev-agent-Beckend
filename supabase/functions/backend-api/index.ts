@@ -890,6 +890,79 @@ serve(async (req) => {
       });
     }
 
+    // --- CREDENTIALS (Super Admin manages API keys: Gemini, Groq, HF, Tavily, GitHub, etc.) ---
+    // Stored in DB (system_credentials). Edge functions read DB-first then fall back to env vars.
+    // Known keys we surface in the UI:
+    const KNOWN_CRED_KEYS = [
+      { key: "GEMINI_API_KEY", label: "Gemini API Key", help: "Google AI Studio → API key" },
+      { key: "DEEPSEEK_API_KEY", label: "DeepSeek API Key", help: "platform.deepseek.com" },
+      { key: "GROQ_API_KEY", label: "Groq API Key", help: "console.groq.com/keys" },
+      { key: "HF_INFERENCE_TOKEN", label: "HuggingFace Inference Token", help: "huggingface.co/settings/tokens" },
+      { key: "HF_TOKEN", label: "HuggingFace Token (Spaces)", help: "huggingface.co/settings/tokens (write)" },
+      { key: "TAVILY_API_KEY", label: "Tavily Search API", help: "tavily.com" },
+      { key: "GITHUB_TOKEN", label: "GitHub Token", help: "github.com/settings/tokens (repo scope)" },
+      { key: "OPENAI_API_KEY", label: "OpenAI API Key", help: "platform.openai.com" },
+      { key: "LOVABLE_API_KEY", label: "Lovable AI Gateway Key", help: "managed automatically" },
+    ];
+
+    if (action === "credentials/list") {
+      if (!supabase) return jsonResponse({ error: "DB unavailable" }, 503);
+      const { data } = await tFilter(supabase.from("system_credentials").select("id,key_name,description,is_active,updated_at"))
+        .order("key_name");
+      const dbMap = new Map((data || []).map((r: any) => [r.key_name, r]));
+      const merged = KNOWN_CRED_KEYS.map((k) => {
+        const row: any = dbMap.get(k.key);
+        const envSet = !!Deno.env.get(k.key);
+        return {
+          key_name: k.key,
+          label: k.label,
+          help: k.help,
+          env_set: envSet,
+          db_set: !!row,
+          is_active: row?.is_active ?? true,
+          updated_at: row?.updated_at || null,
+          source: row?.is_active && row?.value !== "" ? "db" : (envSet ? "env" : "none"),
+        };
+      });
+      // Include any custom keys not in KNOWN
+      for (const r of (data || []) as any[]) {
+        if (!KNOWN_CRED_KEYS.find((k) => k.key === r.key_name)) {
+          merged.push({
+            key_name: r.key_name, label: r.key_name, help: "custom",
+            env_set: !!Deno.env.get(r.key_name), db_set: true,
+            is_active: r.is_active, updated_at: r.updated_at, source: "db",
+          });
+        }
+      }
+      return jsonResponse({ credentials: merged });
+    }
+
+    if (action === "credentials/save" && req.method === "POST") {
+      if (!supabase) return jsonResponse({ error: "DB unavailable" }, 503);
+      const { key_name, value, description = "", is_active = true } = body;
+      if (!key_name || typeof key_name !== "string" || !/^[A-Z0-9_]{2,64}$/.test(key_name)) {
+        return jsonResponse({ error: "Invalid key_name (must be UPPER_SNAKE_CASE, 2-64 chars)" }, 400);
+      }
+      if (typeof value !== "string") return jsonResponse({ error: "value required (string)" }, 400);
+      const { error } = await supabase.from("system_credentials").upsert({
+        tenant_id: writeTenant, key_name, value, description, is_active,
+      }, { onConflict: "tenant_id,key_name" });
+      if (error) return jsonResponse({ error: error.message }, 500);
+      await audit("super_admin", "credential.save", key_name, { is_active });
+      await notify("info", "🔑 Credential updated", key_name, {});
+      return jsonResponse({ success: true });
+    }
+
+    if (action === "credentials/delete" && req.method === "POST") {
+      if (!supabase) return jsonResponse({ error: "DB unavailable" }, 503);
+      const { key_name } = body;
+      if (!key_name) return jsonResponse({ error: "key_name required" }, 400);
+      const { error } = await tFilter(supabase.from("system_credentials").delete()).eq("key_name", key_name);
+      if (error) return jsonResponse({ error: error.message }, 500);
+      await audit("super_admin", "credential.delete", key_name, {});
+      return jsonResponse({ success: true });
+    }
+
     return jsonResponse({ error: `Unknown action: ${action}` }, 404);
   } catch (e) {
     console.error("Backend API error:", e);
