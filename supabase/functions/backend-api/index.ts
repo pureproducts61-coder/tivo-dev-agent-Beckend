@@ -959,26 +959,39 @@ serve(async (req) => {
 
     if (action === "credentials/save" && req.method === "POST") {
       if (!supabase) return jsonResponse({ error: "DB unavailable" }, 503);
+      if (!isSA) return jsonResponse({ error: "Super Admin only" }, 403);
       const { key_name, value, description = "", is_active = true } = body;
       if (!key_name || typeof key_name !== "string" || !/^[A-Z0-9_]{2,64}$/.test(key_name)) {
         return jsonResponse({ error: "Invalid key_name (must be UPPER_SNAKE_CASE, 2-64 chars)" }, 400);
       }
       if (typeof value !== "string") return jsonResponse({ error: "value required (string)" }, 400);
+      const maskFn = (v: string) => !v ? "" : v.length <= 8 ? "•".repeat(v.length) : `${v.slice(0,3)}••••${v.slice(-3)}`;
+      const { data: prev } = await supabase.from("system_credentials").select("value").eq("tenant_id", writeTenant).eq("key_name", key_name).maybeSingle();
+      const oldPreview = maskFn(prev?.value || "");
+      const newPreview = maskFn(value);
       const { error } = await supabase.from("system_credentials").upsert({
         tenant_id: writeTenant, key_name, value, description, is_active,
       }, { onConflict: "tenant_id,key_name" });
       if (error) return jsonResponse({ error: error.message }, 500);
-      await audit("super_admin", "credential.save", key_name, { is_active });
-      await notify("info", "🔑 Credential updated", key_name, {});
-      return jsonResponse({ success: true });
+      await supabase.from("credential_history").insert({
+        tenant_id: writeTenant, key_name, action: prev ? "rotate" : "create",
+        actor: "super_admin", old_preview: oldPreview, new_preview: newPreview, notes: description || "",
+      });
+      await audit("super_admin", "credential.save", key_name, { is_active, rotated: !!prev });
+      await notify("info", "🔑 Credential updated", `${key_name} → ${newPreview}`, {});
+      return jsonResponse({ success: true, masked: newPreview });
     }
 
     if (action === "credentials/delete" && req.method === "POST") {
       if (!supabase) return jsonResponse({ error: "DB unavailable" }, 503);
+      if (!isSA) return jsonResponse({ error: "Super Admin only" }, 403);
       const { key_name } = body;
       if (!key_name) return jsonResponse({ error: "key_name required" }, 400);
       const { error } = await tFilter(supabase.from("system_credentials").delete()).eq("key_name", key_name);
       if (error) return jsonResponse({ error: error.message }, 500);
+      await supabase.from("credential_history").insert({
+        tenant_id: writeTenant, key_name, action: "delete", actor: "super_admin",
+      });
       await audit("super_admin", "credential.delete", key_name, {});
       return jsonResponse({ success: true });
     }
