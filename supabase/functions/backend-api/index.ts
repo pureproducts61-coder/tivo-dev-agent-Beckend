@@ -430,12 +430,32 @@ serve(async (req) => {
     }
 
     // === Super Admin verify (no auth header — uses body credentials) ===
+    // HARD LOCK: only pureproducts61@gmail.com can be Super Admin (Sheikh Razwan).
+    // Env override is allowed only if it matches the locked identity.
+    const LOCKED_SUPER_ADMIN_EMAIL = "pureproducts61@gmail.com";
     if (action === "super-admin-verify" && req.method === "POST") {
       const b = await req.json().catch(() => ({}));
-      const adminEmail = (Deno.env.get("SUPER_ADMIN_MASTER_EMAIL") || "").trim().toLowerCase();
+      const envEmail = (Deno.env.get("SUPER_ADMIN_MASTER_EMAIL") || "").trim().toLowerCase();
+      const adminEmail = LOCKED_SUPER_ADMIN_EMAIL; // hard lock
       const adminSecret = Deno.env.get("SUPER_ADMIN_MASTER_SECRET") || "";
-      if (!adminEmail || !adminSecret) {
+      if (envEmail && envEmail !== LOCKED_SUPER_ADMIN_EMAIL) {
+        return jsonResponse({ ok: false, error: "Super admin identity is locked" }, 403);
+      }
+      if (!adminSecret) {
         return jsonResponse({ ok: false, error: "Super admin not configured" }, 503);
+      }
+      // --- Magic Link request (sends email; only for the locked identity) ---
+      if (b.method === "magic-link-request") {
+        const email = (b.email || "").trim().toLowerCase();
+        if (email !== adminEmail) return jsonResponse({ ok: false, error: "শুধু অনুমোদিত ইমেইল ব্যবহার করতে পারবে" }, 403);
+        const supaUrl = Deno.env.get("SUPABASE_URL");
+        const supaAnon = Deno.env.get("SUPABASE_ANON_KEY") || Deno.env.get("SUPABASE_PUBLISHABLE_KEY");
+        if (!supaUrl || !supaAnon) return jsonResponse({ ok: false, error: "Auth not configured" }, 503);
+        const c = createClient(supaUrl, supaAnon);
+        const redirectTo = (b.redirect_to as string) || `${supaUrl}`;
+        const { error } = await c.auth.signInWithOtp({ email, options: { emailRedirectTo: redirectTo } });
+        if (error) return jsonResponse({ ok: false, error: error.message }, 400);
+        return jsonResponse({ ok: true, sent: true, message: "Magic link পাঠানো হয়েছে — ইমেইল চেক করুন" });
       }
       if (b.method === "google") {
         // Require a verified Supabase access token; never trust caller-supplied email
