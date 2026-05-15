@@ -13,16 +13,17 @@ export default function SuperAdminLogin() {
   const [busy, setBusy] = useState(false);
   const [err, setErr] = useState<string | null>(null);
 
-  async function verify(method: "secret" | "google", emailVal: string, secretVal?: string, accessToken?: string) {
+  async function verify(method: "secret" | "google" | "magic-link-request", emailVal: string, secretVal?: string, accessToken?: string) {
     setBusy(true); setErr(null);
     try {
       const r = await fetch(`${BACKEND}/functions/v1/backend-api/super-admin-verify`, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ method, email: emailVal, secret: secretVal, access_token: accessToken }),
+        body: JSON.stringify({ method, email: emailVal, secret: secretVal, access_token: accessToken, redirect_to: `${window.location.origin}/super-admin/login` }),
       });
       const data = await r.json();
       if (!r.ok || !data.ok) throw new Error(data.error || "Login failed");
+      if (method === "magic-link-request") { setErr("✉️ Magic link পাঠানো হয়েছে — ইমেইল চেক করুন"); return; }
       login({ email: data.email, masterSecret: data.master_secret, loggedInAt: Date.now() });
       nav("/super-admin/workspace");
     } catch (e: any) {
@@ -90,6 +91,13 @@ export default function SuperAdminLogin() {
             className="w-full py-2.5 rounded-lg bg-amber-700 hover:bg-amber-600 transition font-medium disabled:opacity-50"
           >
             {busy ? "Verifying..." : "Login with Secret"}
+          </button>
+          <button
+            onClick={() => verify("magic-link-request", email)}
+            disabled={busy || !email}
+            className="w-full py-2 rounded-lg border border-amber-700/60 text-amber-300 hover:bg-amber-900/20 transition text-sm disabled:opacity-50"
+          >
+            ✉️ Magic Link পাঠাও (ইমেইলে)
           </button>
 
           {err && <div className="text-sm text-red-400 text-center">{err}</div>}

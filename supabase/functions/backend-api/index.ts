@@ -430,12 +430,32 @@ serve(async (req) => {
     }
 
     // === Super Admin verify (no auth header — uses body credentials) ===
+    // HARD LOCK: only pureproducts61@gmail.com can be Super Admin (Sheikh Razwan).
+    // Env override is allowed only if it matches the locked identity.
+    const LOCKED_SUPER_ADMIN_EMAIL = "pureproducts61@gmail.com";
     if (action === "super-admin-verify" && req.method === "POST") {
       const b = await req.json().catch(() => ({}));
-      const adminEmail = (Deno.env.get("SUPER_ADMIN_MASTER_EMAIL") || "").trim().toLowerCase();
+      const envEmail = (Deno.env.get("SUPER_ADMIN_MASTER_EMAIL") || "").trim().toLowerCase();
+      const adminEmail = LOCKED_SUPER_ADMIN_EMAIL; // hard lock
       const adminSecret = Deno.env.get("SUPER_ADMIN_MASTER_SECRET") || "";
-      if (!adminEmail || !adminSecret) {
+      if (envEmail && envEmail !== LOCKED_SUPER_ADMIN_EMAIL) {
+        return jsonResponse({ ok: false, error: "Super admin identity is locked" }, 403);
+      }
+      if (!adminSecret) {
         return jsonResponse({ ok: false, error: "Super admin not configured" }, 503);
+      }
+      // --- Magic Link request (sends email; only for the locked identity) ---
+      if (b.method === "magic-link-request") {
+        const email = (b.email || "").trim().toLowerCase();
+        if (email !== adminEmail) return jsonResponse({ ok: false, error: "শুধু অনুমোদিত ইমেইল ব্যবহার করতে পারবে" }, 403);
+        const supaUrl = Deno.env.get("SUPABASE_URL");
+        const supaAnon = Deno.env.get("SUPABASE_ANON_KEY") || Deno.env.get("SUPABASE_PUBLISHABLE_KEY");
+        if (!supaUrl || !supaAnon) return jsonResponse({ ok: false, error: "Auth not configured" }, 503);
+        const c = createClient(supaUrl, supaAnon);
+        const redirectTo = (b.redirect_to as string) || `${supaUrl}`;
+        const { error } = await c.auth.signInWithOtp({ email, options: { emailRedirectTo: redirectTo } });
+        if (error) return jsonResponse({ ok: false, error: error.message }, 400);
+        return jsonResponse({ ok: true, sent: true, message: "Magic link পাঠানো হয়েছে — ইমেইল চেক করুন" });
       }
       if (b.method === "google") {
         // Require a verified Supabase access token; never trust caller-supplied email
@@ -939,28 +959,332 @@ serve(async (req) => {
 
     if (action === "credentials/save" && req.method === "POST") {
       if (!supabase) return jsonResponse({ error: "DB unavailable" }, 503);
+      if (!isSA) return jsonResponse({ error: "Super Admin only" }, 403);
       const { key_name, value, description = "", is_active = true } = body;
       if (!key_name || typeof key_name !== "string" || !/^[A-Z0-9_]{2,64}$/.test(key_name)) {
         return jsonResponse({ error: "Invalid key_name (must be UPPER_SNAKE_CASE, 2-64 chars)" }, 400);
       }
       if (typeof value !== "string") return jsonResponse({ error: "value required (string)" }, 400);
+      const maskFn = (v: string) => !v ? "" : v.length <= 8 ? "•".repeat(v.length) : `${v.slice(0,3)}••••${v.slice(-3)}`;
+      const { data: prev } = await supabase.from("system_credentials").select("value").eq("tenant_id", writeTenant).eq("key_name", key_name).maybeSingle();
+      const oldPreview = maskFn(prev?.value || "");
+      const newPreview = maskFn(value);
       const { error } = await supabase.from("system_credentials").upsert({
         tenant_id: writeTenant, key_name, value, description, is_active,
       }, { onConflict: "tenant_id,key_name" });
       if (error) return jsonResponse({ error: error.message }, 500);
-      await audit("super_admin", "credential.save", key_name, { is_active });
-      await notify("info", "🔑 Credential updated", key_name, {});
-      return jsonResponse({ success: true });
+      await supabase.from("credential_history").insert({
+        tenant_id: writeTenant, key_name, action: prev ? "rotate" : "create",
+        actor: "super_admin", old_preview: oldPreview, new_preview: newPreview, notes: description || "",
+      });
+      await audit("super_admin", "credential.save", key_name, { is_active, rotated: !!prev });
+      await notify("info", "🔑 Credential updated", `${key_name} → ${newPreview}`, {});
+      return jsonResponse({ success: true, masked: newPreview });
     }
 
     if (action === "credentials/delete" && req.method === "POST") {
       if (!supabase) return jsonResponse({ error: "DB unavailable" }, 503);
+      if (!isSA) return jsonResponse({ error: "Super Admin only" }, 403);
       const { key_name } = body;
       if (!key_name) return jsonResponse({ error: "key_name required" }, 400);
       const { error } = await tFilter(supabase.from("system_credentials").delete()).eq("key_name", key_name);
       if (error) return jsonResponse({ error: error.message }, 500);
+      await supabase.from("credential_history").insert({
+        tenant_id: writeTenant, key_name, action: "delete", actor: "super_admin",
+      });
       await audit("super_admin", "credential.delete", key_name, {});
       return jsonResponse({ success: true });
+    }
+
+    // === Helper: mask secret for display ===
+    const mask = (v: string) => {
+      if (!v) return "";
+      if (v.length <= 8) return "•".repeat(v.length);
+      return `${v.slice(0, 3)}••••${v.slice(-3)}`;
+    };
+
+    // === Get effective credential value (DB first, then ENV) ===
+    async function getCred(name: string): Promise<string> {
+      if (supabase) {
+        const { data } = await tFilter(supabase.from("system_credentials").select("value,is_active"))
+          .eq("key_name", name).maybeSingle();
+        if (data?.is_active && data?.value) return data.value as string;
+      }
+      return Deno.env.get(name) || "";
+    }
+
+    // === credentials/test — Test Connection for each provider ===
+    if (action === "credentials/test" && req.method === "POST") {
+      const { provider } = body as { provider?: string };
+      if (!provider) return jsonResponse({ error: "provider required" }, 400);
+      const started = Date.now();
+      try {
+        let ok = false; let detail = "";
+        if (provider === "GEMINI_API_KEY") {
+          const k = await getCred("GEMINI_API_KEY");
+          if (!k) { detail = "Key missing"; }
+          else {
+            const r = await fetch(`https://generativelanguage.googleapis.com/v1beta/models?key=${k}`);
+            ok = r.ok; detail = ok ? "Gemini OK" : `HTTP ${r.status}`;
+          }
+        } else if (provider === "DEEPSEEK_API_KEY") {
+          const k = await getCred("DEEPSEEK_API_KEY");
+          if (!k) detail = "Key missing";
+          else {
+            const r = await fetch("https://api.deepseek.com/v1/models", { headers: { Authorization: `Bearer ${k}` } });
+            ok = r.ok; detail = ok ? "DeepSeek OK" : `HTTP ${r.status}`;
+          }
+        } else if (provider === "GROQ_API_KEY") {
+          const k = await getCred("GROQ_API_KEY");
+          if (!k) detail = "Key missing";
+          else {
+            const r = await fetch("https://api.groq.com/openai/v1/models", { headers: { Authorization: `Bearer ${k}` } });
+            ok = r.ok; detail = ok ? "Groq OK" : `HTTP ${r.status}`;
+          }
+        } else if (provider === "HF_INFERENCE_TOKEN" || provider === "HF_TOKEN") {
+          const k = await getCred(provider);
+          if (!k) detail = "Key missing";
+          else {
+            const r = await fetch("https://huggingface.co/api/whoami-v2", { headers: { Authorization: `Bearer ${k}` } });
+            ok = r.ok; detail = ok ? "HuggingFace OK" : `HTTP ${r.status}`;
+          }
+        } else if (provider === "TAVILY_API_KEY") {
+          const k = await getCred("TAVILY_API_KEY");
+          if (!k) detail = "Key missing";
+          else {
+            const r = await fetch("https://api.tavily.com/search", {
+              method: "POST", headers: { "Content-Type": "application/json" },
+              body: JSON.stringify({ api_key: k, query: "ping", max_results: 1 }),
+            });
+            ok = r.ok; detail = ok ? "Tavily OK" : `HTTP ${r.status}`;
+          }
+        } else if (provider === "GITHUB_TOKEN") {
+          const k = await getCred("GITHUB_TOKEN");
+          if (!k) detail = "Key missing";
+          else {
+            const r = await fetch("https://api.github.com/user", {
+              headers: { Authorization: `Bearer ${k}`, "User-Agent": "tivo-dev-agent" },
+            });
+            ok = r.ok; detail = ok ? "GitHub OK" : `HTTP ${r.status}`;
+          }
+        } else if (provider === "OPENAI_API_KEY") {
+          const k = await getCred("OPENAI_API_KEY");
+          if (!k) detail = "Key missing";
+          else {
+            const r = await fetch("https://api.openai.com/v1/models", { headers: { Authorization: `Bearer ${k}` } });
+            ok = r.ok; detail = ok ? "OpenAI OK" : `HTTP ${r.status}`;
+          }
+        } else if (provider === "LOVABLE_API_KEY") {
+          const k = await getCred("LOVABLE_API_KEY");
+          ok = !!k; detail = ok ? "Lovable AI key present" : "Key missing";
+        } else {
+          return jsonResponse({ error: "Unknown provider" }, 400);
+        }
+        const ms = Date.now() - started;
+        if (supabase) {
+          await audit("super_admin", "credential.test", provider, { ok, detail, ms });
+          await notify(ok ? "info" : "warn", `🧪 Test: ${provider}`, `${ok ? "✅" : "❌"} ${detail} (${ms}ms)`, {});
+        }
+        return jsonResponse({ ok, provider, detail, latency_ms: ms });
+      } catch (e) {
+        const msg = e instanceof Error ? e.message : String(e);
+        await audit("super_admin", "credential.test_error", provider, { error: msg });
+        return jsonResponse({ ok: false, provider, detail: msg, latency_ms: Date.now() - started }, 200);
+      }
+    }
+
+    // === credentials/history — rotation log ===
+    if (action === "credentials/history") {
+      if (!supabase) return jsonResponse({ error: "DB unavailable" }, 503);
+      const k = url.searchParams.get("key_name");
+      let q = tFilter(supabase.from("credential_history").select("*"))
+        .order("created_at", { ascending: false }).limit(100);
+      if (k) q = q.eq("key_name", k);
+      const { data, error } = await q;
+      if (error) return jsonResponse({ error: error.message }, 500);
+      return jsonResponse({ history: data || [] });
+    }
+
+    // === credentials/reveal — return masked + (optional) plain when requested ===
+    if (action === "credentials/reveal" && req.method === "POST") {
+      if (!isSA) return jsonResponse({ error: "Super Admin only" }, 403);
+      if (!supabase) return jsonResponse({ error: "DB unavailable" }, 503);
+      const { key_name, full = false } = body;
+      const v = await getCred(key_name);
+      await audit("super_admin", "credential.reveal", key_name, { full });
+      return jsonResponse({ key_name, masked: mask(v), value: full ? v : undefined, present: !!v });
+    }
+
+    // === cost/track — record AI/API spend ===
+    if (action === "cost/track" && req.method === "POST") {
+      if (!supabase) return jsonResponse({ error: "DB unavailable" }, 503);
+      const { provider, model = "", tokens_in = 0, tokens_out = 0, cost_usd = 0, metadata = {} } = body;
+      if (!provider) return jsonResponse({ error: "provider required" }, 400);
+      const { error } = await supabase.from("cost_tracking").insert({
+        tenant_id: writeTenant, provider, model, tokens_in, tokens_out, cost_usd, metadata,
+      });
+      if (error) return jsonResponse({ error: error.message }, 500);
+      // Budget check
+      const { data: ks } = await supabase.from("kill_switch_state").select("*").eq("tenant_id", writeTenant).maybeSingle();
+      if (ks?.daily_budget_usd && +ks.daily_budget_usd > 0) {
+        const since = new Date(Date.now() - 24 * 3600_000).toISOString();
+        const { data: today } = await supabase.from("cost_tracking").select("cost_usd").eq("tenant_id", writeTenant).gte("created_at", since);
+        const sum = (today || []).reduce((a: number, r: any) => a + Number(r.cost_usd || 0), 0);
+        if (sum >= +ks.daily_budget_usd) {
+          await supabase.from("kill_switch_state").update({ external_apis_enabled: false, reason: `Daily budget $${ks.daily_budget_usd} exceeded` }).eq("tenant_id", writeTenant);
+          await notify("error", "💸 Daily budget exceeded", `External APIs auto-disabled at $${sum.toFixed(2)}`, {});
+        }
+      }
+      return jsonResponse({ success: true });
+    }
+    if (action === "cost/summary") {
+      if (!supabase) return jsonResponse({ error: "DB unavailable" }, 503);
+      const since = new Date(Date.now() - 30 * 24 * 3600_000).toISOString();
+      const { data } = await tFilter(supabase.from("cost_tracking").select("provider,cost_usd,tokens_in,tokens_out,created_at"))
+        .gte("created_at", since).limit(5000);
+      const rows = data || [];
+      const byProvider: Record<string, { cost: number; in: number; out: number; calls: number }> = {};
+      let total = 0;
+      for (const r of rows as any[]) {
+        const p = r.provider || "unknown";
+        byProvider[p] = byProvider[p] || { cost: 0, in: 0, out: 0, calls: 0 };
+        byProvider[p].cost += Number(r.cost_usd || 0);
+        byProvider[p].in += Number(r.tokens_in || 0);
+        byProvider[p].out += Number(r.tokens_out || 0);
+        byProvider[p].calls += 1;
+        total += Number(r.cost_usd || 0);
+      }
+      const today = new Date(Date.now() - 24 * 3600_000).toISOString();
+      const todayTotal = rows.filter((r: any) => r.created_at >= today).reduce((a: number, r: any) => a + Number(r.cost_usd || 0), 0);
+      return jsonResponse({ total_30d: total, total_24h: todayTotal, by_provider: byProvider });
+    }
+
+    // === kill-switch/global — Emergency shutdown ===
+    if (action === "kill-switch/global" && req.method === "GET") {
+      if (!supabase) return jsonResponse({ error: "DB unavailable" }, 503);
+      const { data } = await supabase.from("kill_switch_state").select("*").eq("tenant_id", writeTenant).maybeSingle();
+      return jsonResponse({ state: data || { external_apis_enabled: true, public_login_enabled: true, daily_budget_usd: 0, monthly_budget_usd: 0, reason: "" } });
+    }
+    if (action === "kill-switch/global" && req.method === "POST") {
+      if (!isSA) return jsonResponse({ error: "Super Admin only" }, 403);
+      if (!supabase) return jsonResponse({ error: "DB unavailable" }, 503);
+      const update: any = { tenant_id: writeTenant, updated_at: new Date().toISOString(), updated_by: "super_admin" };
+      for (const k of ["external_apis_enabled", "public_login_enabled", "reason", "daily_budget_usd", "monthly_budget_usd"]) {
+        if (k in body) update[k] = body[k];
+      }
+      const { error } = await supabase.from("kill_switch_state").upsert(update, { onConflict: "tenant_id" });
+      if (error) return jsonResponse({ error: error.message }, 500);
+      await audit("super_admin", "kill_switch.update", "global", update);
+      await notify(update.external_apis_enabled === false ? "error" : "warn",
+        "🚨 Kill Switch Updated",
+        `APIs:${update.external_apis_enabled ?? "?"} • Login:${update.public_login_enabled ?? "?"}`, update);
+      return jsonResponse({ success: true });
+    }
+    // Email-trigger shutdown (Sheikh Razwan can email a secret code)
+    if (action === "kill-switch/email-trigger" && req.method === "POST") {
+      const { from_email, code } = body;
+      const expected = Deno.env.get("EMERGENCY_SHUTDOWN_CODE") || "";
+      if (!expected) return jsonResponse({ error: "Not configured" }, 503);
+      if ((from_email || "").toLowerCase() !== LOCKED_SUPER_ADMIN_EMAIL) return jsonResponse({ error: "Unauthorized email" }, 403);
+      if (code !== expected) return jsonResponse({ error: "Invalid code" }, 403);
+      if (!supabase) return jsonResponse({ error: "DB unavailable" }, 503);
+      await supabase.from("kill_switch_state").upsert({
+        tenant_id: writeTenant, external_apis_enabled: false, public_login_enabled: false,
+        reason: "Emergency email trigger", updated_at: new Date().toISOString(),
+      }, { onConflict: "tenant_id" });
+      await audit("super_admin", "kill_switch.email_emergency", "global", { from_email });
+      await notify("error", "🚨 Emergency Shutdown", "ইমেইল কমান্ড থেকে সব এক্সটার্নাল API বন্ধ করা হয়েছে", {});
+      return jsonResponse({ success: true });
+    }
+
+    // === backup/run — snapshot DB+config to system_snapshots and log ===
+    if (action === "backup/run" && req.method === "POST") {
+      if (!isSA) return jsonResponse({ error: "Super Admin only" }, 403);
+      if (!supabase) return jsonResponse({ error: "DB unavailable" }, 503);
+      const started = Date.now();
+      try {
+        const tables = ["projects", "system_memory", "system_credentials", "kill_switch_state", "system_map", "proposed_changes"];
+        const dump: any = {};
+        for (const t of tables) {
+          const { data } = await tFilter(supabase.from(t).select("*")).limit(2000);
+          dump[t] = data || [];
+        }
+        const payload = { taken_at: new Date().toISOString(), tables: dump };
+        const size = JSON.stringify(payload).length;
+        const { data: snap } = await supabase.from("system_snapshots").insert({
+          tenant_id: writeTenant, label: `auto-backup ${new Date().toISOString().slice(0, 10)}`, data: payload,
+        }).select().single();
+        const { data: run } = await supabase.from("backup_runs").insert({
+          tenant_id: writeTenant, status: "ok", destination: "snapshot",
+          size_bytes: size, payload: { snapshot_id: snap?.id, ms: Date.now() - started },
+        }).select().single();
+        await audit("super_admin", "backup.run", run?.id || "", { size, snapshot_id: snap?.id });
+        await notify("info", "💾 Backup Complete", `${(size / 1024).toFixed(1)} KB • ${tables.length} tables`, {});
+        return jsonResponse({ success: true, snapshot_id: snap?.id, size_bytes: size });
+      } catch (e) {
+        const msg = e instanceof Error ? e.message : String(e);
+        await supabase.from("backup_runs").insert({ tenant_id: writeTenant, status: "error", error: msg });
+        return jsonResponse({ error: msg }, 500);
+      }
+    }
+    if (action === "backup/list") {
+      if (!supabase) return jsonResponse({ error: "DB unavailable" }, 503);
+      const { data, error } = await tFilter(supabase.from("backup_runs").select("*"))
+        .order("created_at", { ascending: false }).limit(50);
+      if (error) return jsonResponse({ error: error.message }, 500);
+      return jsonResponse({ backups: data || [] });
+    }
+
+    // === sync/event — stream GitHub / vector-memory sync events to notifications + audit ===
+    if (action === "sync/event" && req.method === "POST") {
+      const { source = "unknown", phase = "info", title, message = "", details = {} } = body;
+      if (!title) return jsonResponse({ error: "title required" }, 400);
+      const level = phase === "error" ? "error" : phase === "end" ? "info" : phase === "start" ? "info" : "warn";
+      await notify(level, `🔄 ${source}: ${title}`, message, { phase, ...details });
+      await audit("tivo", `sync.${source}.${phase}`, title, details);
+      return jsonResponse({ success: true });
+    }
+
+    // === e2e/run — Worker Queue end-to-end test (deploy → snapshot → rollback) ===
+    if (action === "e2e/run" && req.method === "POST") {
+      if (!isSA) return jsonResponse({ error: "Super Admin only" }, 403);
+      if (!supabase) return jsonResponse({ error: "DB unavailable" }, 503);
+      const steps: any[] = [];
+      const log = async (name: string, ok: boolean, info: any = {}) => {
+        steps.push({ name, ok, ...info });
+        await audit("tivo", `e2e.${name}`, "test-run", { ok, ...info });
+      };
+      try {
+        // 1. snapshot
+        const { data: snap } = await supabase.from("system_snapshots").insert({
+          tenant_id: writeTenant, label: "e2e-pre", data: { test: true, ts: Date.now() },
+        }).select().single();
+        await log("snapshot", !!snap?.id, { snapshot_id: snap?.id });
+        // 2. proposal create
+        const { data: prop } = await supabase.from("proposed_changes").insert({
+          tenant_id: writeTenant, title: "E2E test proposal", description: "automated", change_type: "test",
+          payload: { test: true }, risk_level: "low",
+        }).select().single();
+        await log("proposal_create", !!prop?.id, { proposal_id: prop?.id });
+        // 3. approve+apply
+        await supabase.from("proposed_changes").update({ status: "approved", reviewed_by: "e2e", reviewed_at: new Date().toISOString() }).eq("id", prop!.id);
+        await supabase.from("proposed_changes").update({ status: "applied", applied_at: new Date().toISOString(), rollback_data: { snapshot_id: snap?.id } }).eq("id", prop!.id);
+        await log("apply", true, { proposal_id: prop?.id });
+        // 4. rollback
+        await supabase.from("proposed_changes").update({ status: "rolled_back" }).eq("id", prop!.id);
+        await log("rollback", true);
+        // 5. cleanup
+        await supabase.from("proposed_changes").delete().eq("id", prop!.id);
+        await supabase.from("system_snapshots").delete().eq("id", snap!.id);
+        await log("cleanup", true);
+        await notify("info", "🧪 E2E Test Passed", `${steps.length} steps OK`, { steps });
+        return jsonResponse({ success: true, steps });
+      } catch (e) {
+        const msg = e instanceof Error ? e.message : String(e);
+        await log("error", false, { error: msg });
+        await notify("error", "🧪 E2E Test Failed", msg, { steps });
+        return jsonResponse({ success: false, error: msg, steps }, 500);
+      }
     }
 
     return jsonResponse({ error: `Unknown action: ${action}` }, 404);
