@@ -92,6 +92,13 @@ export default function SuperAdminLogin() {
           >
             {busy ? "Verifying..." : "Login with Secret"}
           </button>
+          <button
+            onClick={() => verify("magic-link-request", email)}
+            disabled={busy || !email}
+            className="w-full py-2 rounded-lg border border-amber-700/60 text-amber-300 hover:bg-amber-900/20 transition text-sm disabled:opacity-50"
+          >
+            ✉️ Magic Link পাঠাও (ইমেইলে)
+          </button>
 
           {err && <div className="text-sm text-red-400 text-center">{err}</div>}
         </div>
