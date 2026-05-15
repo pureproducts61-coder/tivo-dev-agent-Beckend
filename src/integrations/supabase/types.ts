@@ -47,6 +47,39 @@ export type Database = {
         }
         Relationships: []
       }
+      backup_runs: {
+        Row: {
+          created_at: string
+          destination: string | null
+          error: string | null
+          id: string
+          payload: Json
+          size_bytes: number | null
+          status: string
+          tenant_id: string
+        }
+        Insert: {
+          created_at?: string
+          destination?: string | null
+          error?: string | null
+          id?: string
+          payload?: Json
+          size_bytes?: number | null
+          status?: string
+          tenant_id?: string
+        }
+        Update: {
+          created_at?: string
+          destination?: string | null
+          error?: string | null
+          id?: string
+          payload?: Json
+          size_bytes?: number | null
+          status?: string
+          tenant_id?: string
+        }
+        Relationships: []
+      }
       conversations: {
         Row: {
           created_at: string
@@ -68,6 +101,153 @@ export type Database = {
           title?: string
           updated_at?: string
           user_id?: string
+        }
+        Relationships: []
+      }
+      cost_tracking: {
+        Row: {
+          cost_usd: number
+          created_at: string
+          id: string
+          metadata: Json
+          model: string | null
+          provider: string
+          tenant_id: string
+          tokens_in: number
+          tokens_out: number
+        }
+        Insert: {
+          cost_usd?: number
+          created_at?: string
+          id?: string
+          metadata?: Json
+          model?: string | null
+          provider: string
+          tenant_id?: string
+          tokens_in?: number
+          tokens_out?: number
+        }
+        Update: {
+          cost_usd?: number
+          created_at?: string
+          id?: string
+          metadata?: Json
+          model?: string | null
+          provider?: string
+          tenant_id?: string
+          tokens_in?: number
+          tokens_out?: number
+        }
+        Relationships: []
+      }
+      credential_history: {
+        Row: {
+          action: string
+          actor: string
+          created_at: string
+          id: string
+          key_name: string
+          new_preview: string | null
+          notes: string | null
+          old_preview: string | null
+          tenant_id: string
+        }
+        Insert: {
+          action: string
+          actor?: string
+          created_at?: string
+          id?: string
+          key_name: string
+          new_preview?: string | null
+          notes?: string | null
+          old_preview?: string | null
+          tenant_id?: string
+        }
+        Update: {
+          action?: string
+          actor?: string
+          created_at?: string
+          id?: string
+          key_name?: string
+          new_preview?: string | null
+          notes?: string | null
+          old_preview?: string | null
+          tenant_id?: string
+        }
+        Relationships: []
+      }
+      email_commands: {
+        Row: {
+          body: string | null
+          created_at: string
+          from_email: string
+          id: string
+          parsed_action: string | null
+          processed_at: string | null
+          response: string | null
+          status: string
+          subject: string | null
+          tenant_id: string
+        }
+        Insert: {
+          body?: string | null
+          created_at?: string
+          from_email: string
+          id?: string
+          parsed_action?: string | null
+          processed_at?: string | null
+          response?: string | null
+          status?: string
+          subject?: string | null
+          tenant_id?: string
+        }
+        Update: {
+          body?: string | null
+          created_at?: string
+          from_email?: string
+          id?: string
+          parsed_action?: string | null
+          processed_at?: string | null
+          response?: string | null
+          status?: string
+          subject?: string | null
+          tenant_id?: string
+        }
+        Relationships: []
+      }
+      kill_switch_state: {
+        Row: {
+          daily_budget_usd: number
+          external_apis_enabled: boolean
+          id: string
+          monthly_budget_usd: number
+          public_login_enabled: boolean
+          reason: string | null
+          tenant_id: string
+          updated_at: string
+          updated_by: string | null
+        }
+        Insert: {
+          daily_budget_usd?: number
+          external_apis_enabled?: boolean
+          id?: string
+          monthly_budget_usd?: number
+          public_login_enabled?: boolean
+          reason?: string | null
+          tenant_id?: string
+          updated_at?: string
+          updated_by?: string | null
+        }
+        Update: {
+          daily_budget_usd?: number
+          external_apis_enabled?: boolean
+          id?: string
+          monthly_budget_usd?: number
+          public_login_enabled?: boolean
+          reason?: string | null
+          tenant_id?: string
+          updated_at?: string
+          updated_by?: string | null
         }
         Relationships: []
       }
