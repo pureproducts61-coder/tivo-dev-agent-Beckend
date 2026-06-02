@@ -183,7 +183,8 @@ serve(async (req) => {
         }
       }
 
-      const publicUrl = `${Deno.env.get("SUPABASE_URL")}/storage/v1/object/public/project-files/${data.id}/index.html`;
+      const { data: signed } = await supabase.storage.from("project-files").createSignedUrl(`${data.id}/index.html`, 60 * 60 * 24 * 365);
+      const publicUrl = signed?.signedUrl || null;
       await supabase.from("projects").update({ public_url: publicUrl }).eq("id", data.id);
       return jsonResponse({ success: true, project: { ...data, public_url: publicUrl } });
     }
