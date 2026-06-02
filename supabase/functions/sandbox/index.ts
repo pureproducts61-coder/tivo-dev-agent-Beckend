@@ -228,10 +228,10 @@ serve(async (req) => {
         iterations.push({ iteration: i + 1, status: "fixed", issues_found: bugs.issues?.length || 0 });
       }
       if (project_id && supabase) {
-        await supabase.from("projects").update({
+        await tFilter(supabase.from("projects").update({
           last_build_log: JSON.stringify({ iterations }).slice(0, 5000),
           build_status: iterations[iterations.length - 1]?.status === "clean" ? "tested_clean" : "tested_fixed",
-        }).eq("id", project_id).catch(() => {});
+        }).eq("id", project_id)).catch(() => {});
       }
       return jsonResponse({ success: true, fixed_code: currentCode, iterations, total_iterations: iterations.length });
     }
