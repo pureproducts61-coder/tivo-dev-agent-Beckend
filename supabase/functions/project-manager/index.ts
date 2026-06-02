@@ -261,10 +261,11 @@ serve(async (req) => {
           contentType: file.content_type || "text/plain",
           upsert: true,
         });
+        const { data: signed } = error ? { data: null } : await supabase.storage.from("project-files").createSignedUrl(storagePath, 60 * 60 * 24 * 365);
         results.push({
           path: file.path,
           success: !error,
-          url: `${Deno.env.get("SUPABASE_URL")}/storage/v1/object/public/project-files/${storagePath}`,
+          url: signed?.signedUrl || null,
         });
       }
 
