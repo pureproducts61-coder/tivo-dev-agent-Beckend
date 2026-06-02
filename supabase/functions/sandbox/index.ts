@@ -303,7 +303,7 @@ serve(async (req) => {
       const { code, project_id, theme, viewport } = body;
       let codeContent = code;
       if (!codeContent && project_id && supabase) {
-        const { data: project } = await supabase.from("projects").select("files").eq("id", project_id).single();
+        const { data: project } = await tFilter(supabase.from("projects").select("files").eq("id", project_id)).single();
         const uiFiles = (project?.files as any[])?.filter((f: any) => /\.(html|tsx|jsx|css|vue|svelte)$/.test(f.path)) || [];
         codeContent = uiFiles.map((f: any) => `--- ${f.path} ---\n${f.content}`).join("\n\n");
       }
