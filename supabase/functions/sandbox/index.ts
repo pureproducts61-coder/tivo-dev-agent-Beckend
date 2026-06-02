@@ -139,7 +139,7 @@ serve(async (req) => {
       const { files, project_id } = body;
       let projectFiles = files;
       if (!projectFiles && project_id && supabase) {
-        const { data: project } = await supabase.from("projects").select("files").eq("id", project_id).single();
+        const { data: project } = await tFilter(supabase.from("projects").select("files").eq("id", project_id)).single();
         projectFiles = project?.files || [];
       }
       if (!projectFiles?.length) return jsonResponse({ error: "files or project_id required (if using project_id, database must be configured)" }, 400);
