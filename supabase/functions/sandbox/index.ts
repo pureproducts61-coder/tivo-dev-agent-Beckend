@@ -150,7 +150,7 @@ serve(async (req) => {
       ], "google/gemini-2.5-pro");
       const audit = parseJsonFromAI(result) || { raw_audit: result };
       if (project_id && supabase) {
-        await supabase.from("projects").update({ build_status: "audited", last_build_log: JSON.stringify(audit).slice(0, 5000) }).eq("id", project_id).catch(() => {});
+        await tFilter(supabase.from("projects").update({ build_status: "audited", last_build_log: JSON.stringify(audit).slice(0, 5000) }).eq("id", project_id)).catch(() => {});
       }
       return jsonResponse({ success: true, audit });
     }
