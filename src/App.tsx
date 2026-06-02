@@ -16,6 +16,7 @@ const App = () => (
         <Route path="/super-admin/workspace" element={<SuperAdminWorkspace />} />
         <Route path="/super-admin/dashboard" element={<SuperAdminDashboard />} />
         <Route path="/super-admin/debug" element={<SuperAdminDebug />} />
+        <Route path="/super-admin/hybrid" element={<HybridSettings />} />
         <Route path="/tenant-onboarding" element={<TenantOnboarding />} />
         <Route path="*" element={<PublicStatus />} />
       </Routes>
