@@ -6,6 +6,7 @@ import TenantOnboarding from "./pages/TenantOnboarding";
 import SuperAdminDebug from "./pages/SuperAdminDebug";
 import SuperAdminDashboard from "./pages/SuperAdminDashboard";
 import { SuperAdminProvider } from "./contexts/SuperAdminContext";
+import HybridSettings from "./pages/HybridSettings";
 
 const App = () => (
   <SuperAdminProvider>
