@@ -104,6 +104,8 @@ serve(async (req) => {
 
     // Supabase is optional — only needed for project_id lookups
     const supabase = tryGetSupabase();
+    const isSA = tenantId === "super_admin";
+    const tFilter = (q: any) => isSA ? q : q.eq("tenant_id", tenantId);
 
     const url = new URL(req.url);
     const pathParts = url.pathname.split("/").filter(Boolean);
