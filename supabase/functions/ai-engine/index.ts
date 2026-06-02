@@ -589,7 +589,8 @@ Fix ALL remaining issues. Return JSON: {"score":0-100,"fixed_files":[{"path":"st
 
       if (saved?.id) {
         await uploadToStorage(supabase, saved.id, finalFiles);
-        publicUrl = `${Deno.env.get("SUPABASE_URL")}/storage/v1/object/public/project-files/${saved.id}/index.html`;
+        const { data: signed } = await supabase.storage.from("project-files").createSignedUrl(`${saved.id}/index.html`, 60 * 60 * 24 * 365);
+        publicUrl = signed?.signedUrl || null;
         downloadUrl = `${Deno.env.get("SUPABASE_URL")}/functions/v1/project-manager/download?id=${saved.id}&format=zip`;
         await supabase.from("projects").update({ public_url: publicUrl, installer_url: downloadUrl }).eq("id", saved.id);
         steps.push({ step: "deploy", public_url: publicUrl });
