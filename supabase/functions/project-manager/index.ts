@@ -296,7 +296,8 @@ serve(async (req) => {
     if (action === "publish" && req.method === "POST") {
       const { project_id } = body;
       if (!project_id) return jsonResponse({ error: "project_id required" }, 400);
-      const publicUrl = `${Deno.env.get("SUPABASE_URL")}/storage/v1/object/public/project-files/${project_id}/index.html`;
+      const { data: signed } = await supabase.storage.from("project-files").createSignedUrl(`${project_id}/index.html`, 60 * 60 * 24 * 365);
+      const publicUrl = signed?.signedUrl || null;
       const installerUrl = `${Deno.env.get("SUPABASE_URL")}/functions/v1/project-manager/download?id=${project_id}&format=zip`;
       await supabase.from("projects").update({
         status: "published",
