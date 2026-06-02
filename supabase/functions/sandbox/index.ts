@@ -206,7 +206,7 @@ serve(async (req) => {
       let currentCode = code;
       let currentFiles: any[] | null = null;
       if (!currentCode && project_id && supabase) {
-        const { data: project } = await supabase.from("projects").select("files").eq("id", project_id).single();
+        const { data: project } = await tFilter(supabase.from("projects").select("files").eq("id", project_id)).single();
         currentFiles = (project?.files as any[]) || [];
         currentCode = currentFiles.map((f: any) => `--- ${f.path} ---\n${f.content}`).join("\n\n");
       }
