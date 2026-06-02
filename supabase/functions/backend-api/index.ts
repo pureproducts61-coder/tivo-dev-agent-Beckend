@@ -926,6 +926,7 @@ serve(async (req) => {
     ];
 
     if (action === "credentials/list") {
+      if (!isSA) return jsonResponse({ error: "Super Admin only" }, 403);
       if (!supabase) return jsonResponse({ error: "DB unavailable" }, 503);
       const { data } = await tFilter(supabase.from("system_credentials").select("id,key_name,description,is_active,updated_at"))
         .order("key_name");
