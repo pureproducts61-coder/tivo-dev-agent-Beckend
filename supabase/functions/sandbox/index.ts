@@ -191,10 +191,10 @@ serve(async (req) => {
         if (parsed?.is_perfect || (parsed?.ui_score && parsed.ui_score >= 95)) break;
       }
       if (project_id && supabase && currentFiles.length) {
-        const { data: fullProject } = await supabase.from("projects").select("files").eq("id", project_id).single();
+        const { data: fullProject } = await tFilter(supabase.from("projects").select("files").eq("id", project_id)).single();
         const allFiles = (fullProject?.files as any[]) || [];
         for (const cf of currentFiles) { const idx = allFiles.findIndex((f: any) => f.path === cf.path); if (idx >= 0) allFiles[idx] = cf; }
-        await supabase.from("projects").update({ files: allFiles, build_metadata: { visual_audit: passes } }).eq("id", project_id).catch(() => {});
+        await tFilter(supabase.from("projects").update({ files: allFiles, build_metadata: { visual_audit: passes } }).eq("id", project_id)).catch(() => {});
       }
       return jsonResponse({ success: true, passes, final_score: passes[passes.length - 1]?.ui_score || 0, fixed_files: currentFiles, total_passes: passes.length });
     }
