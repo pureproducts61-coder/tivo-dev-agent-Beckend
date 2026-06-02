@@ -320,8 +320,13 @@ Return JSON: {"html":"complete HTML","description":"Bengali description","compon
 
       const parsed = parseJsonFromAI(result);
       if (parsed?.html && project_id && supabase) {
-        await supabase.storage.from("project-files").upload(`${project_id}/_preview.html`, new TextEncoder().encode(parsed.html), { contentType: "text/html", upsert: true }).catch(() => {});
-        parsed.preview_url = `${Deno.env.get("SUPABASE_URL")}/storage/v1/object/public/project-files/${project_id}/_preview.html`;
+        // Verify tenant ownership before writing to storage path
+        const { data: ownCheck } = await tFilter(supabase.from("projects").select("id").eq("id", project_id)).maybeSingle();
+        if (!ownCheck) return jsonResponse({ error: "Project not found or access denied" }, 403);
+        const storagePath = `${project_id}/_preview.html`;
+        await supabase.storage.from("project-files").upload(storagePath, new TextEncoder().encode(parsed.html), { contentType: "text/html", upsert: true }).catch(() => {});
+        const { data: signed } = await supabase.storage.from("project-files").createSignedUrl(storagePath, 60 * 60 * 24 * 7);
+        parsed.preview_url = signed?.signedUrl || null;
       }
 
       return jsonResponse({ success: true, render: parsed || { raw: result } });
