@@ -6,6 +6,7 @@ import TenantOnboarding from "./pages/TenantOnboarding";
 import SuperAdminDebug from "./pages/SuperAdminDebug";
 import SuperAdminDashboard from "./pages/SuperAdminDashboard";
 import { SuperAdminProvider } from "./contexts/SuperAdminContext";
+import HybridSettings from "./pages/HybridSettings";
 
 const App = () => (
   <SuperAdminProvider>
@@ -15,6 +16,7 @@ const App = () => (
         <Route path="/super-admin/workspace" element={<SuperAdminWorkspace />} />
         <Route path="/super-admin/dashboard" element={<SuperAdminDashboard />} />
         <Route path="/super-admin/debug" element={<SuperAdminDebug />} />
+        <Route path="/super-admin/hybrid" element={<HybridSettings />} />
         <Route path="/tenant-onboarding" element={<TenantOnboarding />} />
         <Route path="*" element={<PublicStatus />} />
       </Routes>
