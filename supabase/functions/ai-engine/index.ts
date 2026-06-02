@@ -787,7 +787,8 @@ Generate 15-40 files. Complete code, no TODOs. TypeScript strict.`,
             await supabase.storage.from("project-files").upload(
               `${body.project_id}/${fileName}`, binaryData, { contentType: "image/png", upsert: true }
             ).catch(() => {});
-            storedUrl = `${Deno.env.get("SUPABASE_URL")}/storage/v1/object/public/project-files/${body.project_id}/${fileName}`;
+            const { data: signed } = await supabase.storage.from("project-files").createSignedUrl(`${body.project_id}/${fileName}`, 60 * 60 * 24 * 365);
+            storedUrl = signed?.signedUrl || null;
           }
         }
 
