@@ -104,6 +104,8 @@ serve(async (req) => {
 
     // Supabase is optional — only needed for project_id lookups
     const supabase = tryGetSupabase();
+    const isSA = tenantId === "super_admin";
+    const tFilter = (q: any) => isSA ? q : q.eq("tenant_id", tenantId);
 
     const url = new URL(req.url);
     const pathParts = url.pathname.split("/").filter(Boolean);
@@ -137,7 +139,7 @@ serve(async (req) => {
       const { files, project_id } = body;
       let projectFiles = files;
       if (!projectFiles && project_id && supabase) {
-        const { data: project } = await supabase.from("projects").select("files").eq("id", project_id).single();
+        const { data: project } = await tFilter(supabase.from("projects").select("files").eq("id", project_id)).single();
         projectFiles = project?.files || [];
       }
       if (!projectFiles?.length) return jsonResponse({ error: "files or project_id required (if using project_id, database must be configured)" }, 400);
@@ -148,7 +150,7 @@ serve(async (req) => {
       ], "google/gemini-2.5-pro");
       const audit = parseJsonFromAI(result) || { raw_audit: result };
       if (project_id && supabase) {
-        await supabase.from("projects").update({ build_status: "audited", last_build_log: JSON.stringify(audit).slice(0, 5000) }).eq("id", project_id).catch(() => {});
+        await tFilter(supabase.from("projects").update({ build_status: "audited", last_build_log: JSON.stringify(audit).slice(0, 5000) }).eq("id", project_id)).catch(() => {});
       }
       return jsonResponse({ success: true, audit });
     }
@@ -169,7 +171,7 @@ serve(async (req) => {
       const { files, project_id } = body;
       let uiFiles = files;
       if (!uiFiles && project_id && supabase) {
-        const { data: project } = await supabase.from("projects").select("files").eq("id", project_id).single();
+        const { data: project } = await tFilter(supabase.from("projects").select("files").eq("id", project_id)).single();
         uiFiles = (project?.files as any[])?.filter((f: any) => /\.(html|tsx|jsx|css)$/.test(f.path)) || [];
       }
       if (!uiFiles?.length) return jsonResponse({ error: "No UI files to audit" }, 400);
@@ -189,10 +191,10 @@ serve(async (req) => {
         if (parsed?.is_perfect || (parsed?.ui_score && parsed.ui_score >= 95)) break;
       }
       if (project_id && supabase && currentFiles.length) {
-        const { data: fullProject } = await supabase.from("projects").select("files").eq("id", project_id).single();
+        const { data: fullProject } = await tFilter(supabase.from("projects").select("files").eq("id", project_id)).single();
         const allFiles = (fullProject?.files as any[]) || [];
         for (const cf of currentFiles) { const idx = allFiles.findIndex((f: any) => f.path === cf.path); if (idx >= 0) allFiles[idx] = cf; }
-        await supabase.from("projects").update({ files: allFiles, build_metadata: { visual_audit: passes } }).eq("id", project_id).catch(() => {});
+        await tFilter(supabase.from("projects").update({ files: allFiles, build_metadata: { visual_audit: passes } }).eq("id", project_id)).catch(() => {});
       }
       return jsonResponse({ success: true, passes, final_score: passes[passes.length - 1]?.ui_score || 0, fixed_files: currentFiles, total_passes: passes.length });
     }
@@ -204,7 +206,7 @@ serve(async (req) => {
       let currentCode = code;
       let currentFiles: any[] | null = null;
       if (!currentCode && project_id && supabase) {
-        const { data: project } = await supabase.from("projects").select("files").eq("id", project_id).single();
+        const { data: project } = await tFilter(supabase.from("projects").select("files").eq("id", project_id)).single();
         currentFiles = (project?.files as any[]) || [];
         currentCode = currentFiles.map((f: any) => `--- ${f.path} ---\n${f.content}`).join("\n\n");
       }
@@ -226,10 +228,10 @@ serve(async (req) => {
         iterations.push({ iteration: i + 1, status: "fixed", issues_found: bugs.issues?.length || 0 });
       }
       if (project_id && supabase) {
-        await supabase.from("projects").update({
+        await tFilter(supabase.from("projects").update({
           last_build_log: JSON.stringify({ iterations }).slice(0, 5000),
           build_status: iterations[iterations.length - 1]?.status === "clean" ? "tested_clean" : "tested_fixed",
-        }).eq("id", project_id).catch(() => {});
+        }).eq("id", project_id)).catch(() => {});
       }
       return jsonResponse({ success: true, fixed_code: currentCode, iterations, total_iterations: iterations.length });
     }
@@ -301,7 +303,7 @@ serve(async (req) => {
       const { code, project_id, theme, viewport } = body;
       let codeContent = code;
       if (!codeContent && project_id && supabase) {
-        const { data: project } = await supabase.from("projects").select("files").eq("id", project_id).single();
+        const { data: project } = await tFilter(supabase.from("projects").select("files").eq("id", project_id)).single();
         const uiFiles = (project?.files as any[])?.filter((f: any) => /\.(html|tsx|jsx|css|vue|svelte)$/.test(f.path)) || [];
         codeContent = uiFiles.map((f: any) => `--- ${f.path} ---\n${f.content}`).join("\n\n");
       }
@@ -318,8 +320,13 @@ Return JSON: {"html":"complete HTML","description":"Bengali description","compon
 
       const parsed = parseJsonFromAI(result);
       if (parsed?.html && project_id && supabase) {
-        await supabase.storage.from("project-files").upload(`${project_id}/_preview.html`, new TextEncoder().encode(parsed.html), { contentType: "text/html", upsert: true }).catch(() => {});
-        parsed.preview_url = `${Deno.env.get("SUPABASE_URL")}/storage/v1/object/public/project-files/${project_id}/_preview.html`;
+        // Verify tenant ownership before writing to storage path
+        const { data: ownCheck } = await tFilter(supabase.from("projects").select("id").eq("id", project_id)).maybeSingle();
+        if (!ownCheck) return jsonResponse({ error: "Project not found or access denied" }, 403);
+        const storagePath = `${project_id}/_preview.html`;
+        await supabase.storage.from("project-files").upload(storagePath, new TextEncoder().encode(parsed.html), { contentType: "text/html", upsert: true }).catch(() => {});
+        const { data: signed } = await supabase.storage.from("project-files").createSignedUrl(storagePath, 60 * 60 * 24 * 7);
+        parsed.preview_url = signed?.signedUrl || null;
       }
 
       return jsonResponse({ success: true, render: parsed || { raw: result } });

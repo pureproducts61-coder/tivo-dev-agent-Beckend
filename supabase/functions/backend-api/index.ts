@@ -537,7 +537,7 @@ serve(async (req) => {
           if (body.migrate_data) {
             const src = tryGetSupabase();
             if (src) {
-              const { data: projs } = await src.from("projects").select("*").limit(1000);
+              const { data: projs } = await src.from("projects").select("*").eq("tenant_id", tenant.tenantId).limit(1000);
               if (projs?.length) {
                 const dest = createClient(targetUrl, targetKey);
                 const rows = projs.map((p: any) => ({
@@ -926,6 +926,7 @@ serve(async (req) => {
     ];
 
     if (action === "credentials/list") {
+      if (!isSA) return jsonResponse({ error: "Super Admin only" }, 403);
       if (!supabase) return jsonResponse({ error: "DB unavailable" }, 503);
       const { data } = await tFilter(supabase.from("system_credentials").select("id,key_name,description,is_active,updated_at"))
         .order("key_name");

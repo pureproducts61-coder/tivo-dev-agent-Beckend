@@ -589,7 +589,8 @@ Fix ALL remaining issues. Return JSON: {"score":0-100,"fixed_files":[{"path":"st
 
       if (saved?.id) {
         await uploadToStorage(supabase, saved.id, finalFiles);
-        publicUrl = `${Deno.env.get("SUPABASE_URL")}/storage/v1/object/public/project-files/${saved.id}/index.html`;
+        const { data: signed } = await supabase.storage.from("project-files").createSignedUrl(`${saved.id}/index.html`, 60 * 60 * 24 * 365);
+        publicUrl = signed?.signedUrl || null;
         downloadUrl = `${Deno.env.get("SUPABASE_URL")}/functions/v1/project-manager/download?id=${saved.id}&format=zip`;
         await supabase.from("projects").update({ public_url: publicUrl, installer_url: downloadUrl }).eq("id", saved.id);
         steps.push({ step: "deploy", public_url: publicUrl });
@@ -722,7 +723,8 @@ Generate 15-40 files. Complete code, no TODOs. TypeScript strict.`,
 
       if (saved?.id) {
         await uploadToStorage(supabase, saved.id, projectData.files);
-        result.web_url = `${Deno.env.get("SUPABASE_URL")}/storage/v1/object/public/project-files/${saved.id}/index.html`;
+        const { data: signed } = await supabase.storage.from("project-files").createSignedUrl(`${saved.id}/index.html`, 60 * 60 * 24 * 365);
+        result.web_url = signed?.signedUrl || null;
         result.web_download_url = `${Deno.env.get("SUPABASE_URL")}/functions/v1/project-manager/download?id=${saved.id}&format=zip`;
         await supabase.from("projects").update({ public_url: result.web_url, installer_url: result.web_download_url }).eq("id", saved.id);
       }
@@ -785,7 +787,8 @@ Generate 15-40 files. Complete code, no TODOs. TypeScript strict.`,
             await supabase.storage.from("project-files").upload(
               `${body.project_id}/${fileName}`, binaryData, { contentType: "image/png", upsert: true }
             ).catch(() => {});
-            storedUrl = `${Deno.env.get("SUPABASE_URL")}/storage/v1/object/public/project-files/${body.project_id}/${fileName}`;
+            const { data: signed } = await supabase.storage.from("project-files").createSignedUrl(`${body.project_id}/${fileName}`, 60 * 60 * 24 * 365);
+            storedUrl = signed?.signedUrl || null;
           }
         }
 

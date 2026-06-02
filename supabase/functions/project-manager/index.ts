@@ -183,7 +183,8 @@ serve(async (req) => {
         }
       }
 
-      const publicUrl = `${Deno.env.get("SUPABASE_URL")}/storage/v1/object/public/project-files/${data.id}/index.html`;
+      const { data: signed } = await supabase.storage.from("project-files").createSignedUrl(`${data.id}/index.html`, 60 * 60 * 24 * 365);
+      const publicUrl = signed?.signedUrl || null;
       await supabase.from("projects").update({ public_url: publicUrl }).eq("id", data.id);
       return jsonResponse({ success: true, project: { ...data, public_url: publicUrl } });
     }
@@ -260,10 +261,11 @@ serve(async (req) => {
           contentType: file.content_type || "text/plain",
           upsert: true,
         });
+        const { data: signed } = error ? { data: null } : await supabase.storage.from("project-files").createSignedUrl(storagePath, 60 * 60 * 24 * 365);
         results.push({
           path: file.path,
           success: !error,
-          url: `${Deno.env.get("SUPABASE_URL")}/storage/v1/object/public/project-files/${storagePath}`,
+          url: signed?.signedUrl || null,
         });
       }
 
@@ -294,7 +296,8 @@ serve(async (req) => {
     if (action === "publish" && req.method === "POST") {
       const { project_id } = body;
       if (!project_id) return jsonResponse({ error: "project_id required" }, 400);
-      const publicUrl = `${Deno.env.get("SUPABASE_URL")}/storage/v1/object/public/project-files/${project_id}/index.html`;
+      const { data: signed } = await supabase.storage.from("project-files").createSignedUrl(`${project_id}/index.html`, 60 * 60 * 24 * 365);
+      const publicUrl = signed?.signedUrl || null;
       const installerUrl = `${Deno.env.get("SUPABASE_URL")}/functions/v1/project-manager/download?id=${project_id}&format=zip`;
       await supabase.from("projects").update({
         status: "published",
