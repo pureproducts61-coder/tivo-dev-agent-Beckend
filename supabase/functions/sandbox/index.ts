@@ -171,7 +171,7 @@ serve(async (req) => {
       const { files, project_id } = body;
       let uiFiles = files;
       if (!uiFiles && project_id && supabase) {
-        const { data: project } = await supabase.from("projects").select("files").eq("id", project_id).single();
+        const { data: project } = await tFilter(supabase.from("projects").select("files").eq("id", project_id)).single();
         uiFiles = (project?.files as any[])?.filter((f: any) => /\.(html|tsx|jsx|css)$/.test(f.path)) || [];
       }
       if (!uiFiles?.length) return jsonResponse({ error: "No UI files to audit" }, 400);
