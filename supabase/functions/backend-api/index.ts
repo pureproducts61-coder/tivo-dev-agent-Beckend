@@ -537,7 +537,7 @@ serve(async (req) => {
           if (body.migrate_data) {
             const src = tryGetSupabase();
             if (src) {
-              const { data: projs } = await src.from("projects").select("*").limit(1000);
+              const { data: projs } = await src.from("projects").select("*").eq("tenant_id", tenant.tenantId).limit(1000);
               if (projs?.length) {
                 const dest = createClient(targetUrl, targetKey);
                 const rows = projs.map((p: any) => ({
