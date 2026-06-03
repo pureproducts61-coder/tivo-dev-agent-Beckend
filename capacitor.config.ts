@@ -8,7 +8,7 @@ const config: CapacitorConfig = {
   appId: "app.lovable.tivo.devagent",
   appName: "TIVO DEV AGENT",
   webDir: "dist",
-  bakgroundColor: undefined as never, // placeholder to silence types in some versions
+  
   server: {
     // Lovable sandbox hot-reload (remove for production native build)
     url: "https://815047d2-18b4-41f5-9ab3-e2957e329b06.lovableproject.com?forceHideBadge=true",
