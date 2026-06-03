@@ -81,22 +81,60 @@ export default config;
 
 ---
 
-## 6) Build & Run
+## 6) Build & Run — Web + Mobile একসাথে
 
+### 🌐 Web dev (Terminal 1)
 ```bash
-# Web (PWA)
-npm run build         # → dist/
-# Already PWA-ready (manifest.webmanifest + sw.js in public/)
+npm install
+npm run dev          # → http://localhost:8080
+```
 
-# Android APK
+### 📱 Android dev with live-reload (Terminal 2 — first time only)
+```bash
+npm i @capacitor/core @capacitor/cli
+npm i @capacitor/android @capacitor/ios
+npm i @capacitor/app @capacitor/preferences @capacitor/browser
+npm i @capacitor-community/sqlite
+
 npx cap add android
+# npx cap add ios          # Mac + Xcode required
 npx cap sync android
-npx cap open android  # → Android Studio → Build → Build APK
+```
 
-# iOS (Mac only)
+### ▶️ Run on emulator / phone
+```bash
+# Terminal 1 (npm run dev) must stay running.
+# capacitor.config.ts already points server.url to the dev sandbox,
+# so the APK will hot-reload as you edit code.
+
+npx cap run android        # auto-pick first connected device/emulator
+# or:
+npx cap open android       # open in Android Studio
+```
+
+### 📦 Production APK (offline, no dev server)
+```bash
+# 1. Edit capacitor.config.ts → COMMENT OUT the `server` block:
+#    // server: { url: "...", cleartext: true },
+
+npm run build              # → dist/
+npx cap sync android
+npx cap open android       # → Android Studio → Build → Build APK
+# OR command-line:
+cd android && ./gradlew assembleRelease
+# → android/app/build/outputs/apk/release/app-release.apk
+```
+
+### 🍎 iOS (Mac only)
+```bash
 npx cap add ios
 npx cap sync ios
-npx cap open ios      # → Xcode
+npx cap open ios           # → Xcode → ▶ Run
+```
+
+### 🔄 After any code change
+```bash
+npm run build && npx cap sync   # refreshes both platforms
 ```
 
 ---
