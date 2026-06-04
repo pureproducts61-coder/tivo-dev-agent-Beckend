@@ -795,7 +795,45 @@ serve(async (req) => {
       const { error } = await q.is("read_at", null);
       if (error) return jsonResponse({ error: error.message }, 500);
       return jsonResponse({ success: true });
+    if (action === "notifications/mark-all-read" && req.method === "POST") {
+      if (!supabase) return jsonResponse({ error: "DB unavailable" }, 503);
+      let q = supabase.from("notifications").update({ read_at: new Date().toISOString() });
+      if (!isSA) q = q.eq("tenant_id", T);
+      const { error } = await q.is("read_at", null);
+      if (error) return jsonResponse({ error: error.message }, 500);
+      return jsonResponse({ success: true });
     }
+
+    // --- USERS (Super Admin only) ---
+    if (action === "users/list" && req.method === "GET") {
+      if (!isSA) return jsonResponse({ error: "Super Admin only" }, 403);
+      if (!supabase) return jsonResponse({ error: "DB unavailable" }, 503);
+      const { data, error } = await supabase
+        .from("profiles")
+        .select("user_id,display_name,credits,is_blocked,created_at")
+        .order("created_at", { ascending: false })
+        .limit(500);
+      if (error) return jsonResponse({ error: error.message }, 500);
+      return jsonResponse({ users: data || [] });
+    }
+    if (action === "users/set-blocked" && req.method === "POST") {
+      if (!isSA) return jsonResponse({ error: "Super Admin only" }, 403);
+      if (!supabase) return jsonResponse({ error: "DB unavailable" }, 503);
+      const { user_id, is_blocked } = body || {};
+      if (!user_id || typeof is_blocked !== "boolean") {
+        return jsonResponse({ error: "user_id and is_blocked required" }, 400);
+      }
+      const { data, error } = await supabase.rpc("super_admin_set_profile_flags", {
+        _user_id: user_id,
+        _is_blocked: is_blocked,
+        _credits: null,
+      });
+      if (error) return jsonResponse({ error: error.message }, 500);
+      await audit("super_admin", is_blocked ? "user_block" : "user_unblock", user_id, {});
+      return jsonResponse({ success: true, profile: data });
+    }
+
+
 
     // --- AUDIT LOG ---
     if (action === "audit/list") {
