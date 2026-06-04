@@ -795,7 +795,9 @@ serve(async (req) => {
       const { error } = await q.is("read_at", null);
       if (error) return jsonResponse({ error: error.message }, 500);
       return jsonResponse({ success: true });
+    }
     if (action === "notifications/mark-all-read" && req.method === "POST") {
+
       if (!supabase) return jsonResponse({ error: "DB unavailable" }, 503);
       let q = supabase.from("notifications").update({ read_at: new Date().toISOString() });
       if (!isSA) q = q.eq("tenant_id", T);
