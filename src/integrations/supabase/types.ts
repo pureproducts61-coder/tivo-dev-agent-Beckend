@@ -672,7 +672,23 @@ export type Database = {
       [_ in never]: never
     }
     Functions: {
-      [_ in never]: never
+      super_admin_set_profile_flags: {
+        Args: { _credits?: number; _is_blocked?: boolean; _user_id: string }
+        Returns: {
+          created_at: string
+          credits: number
+          display_name: string | null
+          id: string
+          is_blocked: boolean
+          user_id: string
+        }
+        SetofOptions: {
+          from: "*"
+          to: "profiles"
+          isOneToOne: true
+          isSetofReturn: false
+        }
+      }
     }
     Enums: {
       [_ in never]: never
