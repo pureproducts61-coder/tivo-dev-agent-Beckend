@@ -182,7 +182,13 @@ function parseJsonFromAI(result: string) {
   } catch { return null; }
 }
 
-function generateInstallerScripts(projectName: string) {
+function sanitizeProjectName(raw: string): string {
+  const cleaned = (raw || "").replace(/[^a-zA-Z0-9 _.-]/g, "").trim().slice(0, 64);
+  return cleaned || "tivo-project";
+}
+
+function generateInstallerScripts(rawName: string) {
+  const projectName = sanitizeProjectName(rawName);
   const setupSh = `#!/bin/bash
 echo "========================================="
 echo "  ${projectName} — Auto Installer"
