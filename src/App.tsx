@@ -8,6 +8,7 @@ import SuperAdminDashboard from "./pages/SuperAdminDashboard";
 import HybridSettings from "./pages/HybridSettings";
 import { SuperAdminProvider } from "./contexts/SuperAdminContext";
 import { AppShell } from "./components/layout/AppShell";
+import ChatScreen from "./pages/admin/ChatScreen";
 import Chats from "./pages/admin/Chats";
 import Projects from "./pages/admin/Projects";
 import Users from "./pages/admin/Users";
@@ -26,7 +27,8 @@ const App = () => (
         {/* New mobile-first shell */}
         <Route path="/super-admin/app" element={<AppShell />}>
           <Route index element={<Navigate to="chats" replace />} />
-          <Route path="chats" element={<Chats />} />
+          <Route path="chats" element={<ChatScreen />} />
+          <Route path="conversations" element={<Chats />} />
           <Route path="projects" element={<Projects />} />
           <Route path="users" element={<Users />} />
           <Route path="system" element={<System />} />
