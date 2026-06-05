@@ -260,6 +260,14 @@ serve(async (req) => {
       const { project_id, files } = body;
       if (!project_id || !files?.length) return jsonResponse({ error: "project_id and files required" }, 400);
 
+      // Verify ownership BEFORE any storage write (prevents cross-tenant prefix pollution)
+      const { data: owned, error: ownErr } = await scope(
+        supabase.from("projects").select("id").eq("id", project_id)
+      ).maybeSingle();
+      if (ownErr) return jsonResponse({ error: ownErr.message }, 500);
+      if (!owned) return jsonResponse({ error: "Project not found or access denied" }, 404);
+
+
       const results = [];
       for (const file of files) {
         const storagePath = `${project_id}/${file.path}`;
