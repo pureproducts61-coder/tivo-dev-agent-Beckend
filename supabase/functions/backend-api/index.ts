@@ -1223,17 +1223,23 @@ serve(async (req) => {
     }
     // Email-trigger shutdown (Sheikh Razwan can email a secret code)
     if (action === "kill-switch/email-trigger" && req.method === "POST") {
-      const { from_email, code } = body;
+      // Hardened: require Super Admin master-secret (already validated upstream via resolveTenant→isSA)
+      // plus the emergency code. `from_email` is NOT a verified claim and is ignored for auth.
+      if (!isSA) return jsonResponse({ error: "Super Admin master-secret required" }, 403);
+      const { code } = body;
       const expected = Deno.env.get("EMERGENCY_SHUTDOWN_CODE") || "";
-      if (!expected) return jsonResponse({ error: "Not configured" }, 503);
-      if ((from_email || "").toLowerCase() !== LOCKED_SUPER_ADMIN_EMAIL) return jsonResponse({ error: "Unauthorized email" }, 403);
-      if (code !== expected) return jsonResponse({ error: "Invalid code" }, 403);
+      if (!expected || expected.length < 16) return jsonResponse({ error: "Emergency code not configured (must be ≥16 chars)" }, 503);
+      if (typeof code !== "string" || code.length !== expected.length) return jsonResponse({ error: "Invalid code" }, 403);
+      // constant-time compare
+      let diff = 0;
+      for (let i = 0; i < expected.length; i++) diff |= code.charCodeAt(i) ^ expected.charCodeAt(i);
+      if (diff !== 0) return jsonResponse({ error: "Invalid code" }, 403);
       if (!supabase) return jsonResponse({ error: "DB unavailable" }, 503);
       await supabase.from("kill_switch_state").upsert({
         tenant_id: writeTenant, external_apis_enabled: false, public_login_enabled: false,
         reason: "Emergency email trigger", updated_at: new Date().toISOString(),
       }, { onConflict: "tenant_id" });
-      await audit("super_admin", "kill_switch.email_emergency", "global", { from_email });
+      await audit("super_admin", "kill_switch.email_emergency", "global", {});
       await notify("error", "🚨 Emergency Shutdown", "ইমেইল কমান্ড থেকে সব এক্সটার্নাল API বন্ধ করা হয়েছে", {});
       return jsonResponse({ success: true });
     }
