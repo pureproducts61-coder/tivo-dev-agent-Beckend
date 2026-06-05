@@ -23,9 +23,15 @@ function checkSupabaseConnection() {
   return createClient(url, key);
 }
 
+function sanitizeProjectName(raw: string): string {
+  const cleaned = (raw || "").replace(/[^a-zA-Z0-9 _.-]/g, "").trim().slice(0, 64);
+  return cleaned || "tivo-project";
+}
+
 // Build a downloadable ZIP-like JSON bundle with installer scripts
 function buildDownloadBundle(project: any, files: any[]) {
-  const projectName = project.name || "tivo-project";
+  const projectName = sanitizeProjectName(project.name);
+  const safeDescription = (project.description || "").replace(/[<>`$]/g, "").slice(0, 500);
 
   // Generate README
   const readme = `# ${projectName}
