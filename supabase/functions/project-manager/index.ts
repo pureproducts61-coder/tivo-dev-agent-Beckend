@@ -157,13 +157,14 @@ serve(async (req) => {
     // === CREATE PROJECT ===
     if (action === "create" && req.method === "POST") {
       const { user_id, name, description, repo_url, files } = body;
-      if (!name) return jsonResponse({ error: "name required" }, 400);
+      const cleanName = sanitizeProjectName(name || "");
+      if (!cleanName || cleanName.length < 1) return jsonResponse({ error: "valid name required (1-64 chars, alnum/space/._-)" }, 400);
 
       const { data, error } = await supabase.from("projects").insert({
         user_id: user_id || "system",
         tenant_id: tenantId,
-        name,
-        description: description || "",
+        name: cleanName,
+        description: (description || "").toString().slice(0, 2000),
         repo_url: repo_url || "",
         files: files || [],
         status: "active",
