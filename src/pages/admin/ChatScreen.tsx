@@ -198,7 +198,7 @@ export default function ChatScreen() {
   ];
 
   return (
-    <div className="flex flex-col h-[calc(100dvh-8.5rem)] sm:h-[calc(100dvh-3.5rem)]">
+    <div className="flex flex-col h-[calc(100dvh-7.5rem)]">
       <div ref={scrollRef} className="flex-1 overflow-y-auto px-3 sm:px-6 py-4 space-y-4 max-w-3xl w-full mx-auto">
         {messages.length === 0 && (
           <div className="text-center py-16 space-y-4 animate-fade-in">
