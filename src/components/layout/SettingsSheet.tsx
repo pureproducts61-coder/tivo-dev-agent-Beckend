@@ -2,7 +2,9 @@ import { useEffect, useState } from "react";
 import { useSuperAdmin } from "@/contexts/SuperAdminContext";
 
 const BACKEND = import.meta.env.VITE_SUPABASE_URL;
-const LS_KEY = "tivo_hybrid_settings";
+// Keys kept tab-scoped in sessionStorage; never persisted to localStorage.
+const SS_KEY = "tivo_hybrid_settings";
+const LEGACY_LS_KEY = "tivo_hybrid_settings";
 
 type Mode = "cloud" | "hybrid" | "local";
 
@@ -48,7 +50,15 @@ export function SettingsSheet({ open, onClose }: { open: boolean; onClose: () =>
 
   useEffect(() => {
     try {
-      const raw = localStorage.getItem(LS_KEY);
+      let raw = sessionStorage.getItem(SS_KEY);
+      if (!raw) {
+        const legacy = localStorage.getItem(LEGACY_LS_KEY);
+        if (legacy) {
+          sessionStorage.setItem(SS_KEY, legacy);
+          localStorage.removeItem(LEGACY_LS_KEY);
+          raw = legacy;
+        }
+      }
       if (raw) setS({ ...DEFAULTS, ...JSON.parse(raw) });
     } catch {}
   }, [open]);
@@ -56,7 +66,8 @@ export function SettingsSheet({ open, onClose }: { open: boolean; onClose: () =>
   if (!open) return null;
 
   function save() {
-    localStorage.setItem(LS_KEY, JSON.stringify(s));
+    sessionStorage.setItem(SS_KEY, JSON.stringify(s));
+    try { localStorage.removeItem(LEGACY_LS_KEY); } catch {}
     setSavedFlash(true);
     setTimeout(() => setSavedFlash(false), 1500);
   }
@@ -155,7 +166,8 @@ export function SettingsSheet({ open, onClose }: { open: boolean; onClose: () =>
 
           {/* Provider keys */}
           <section className="rounded-xl border border-zinc-800 p-3 space-y-3">
-            <div className="text-xs text-zinc-400">Provider Keys (device-local)</div>
+            <div className="text-xs text-zinc-400">Provider Keys (tab-only, sessionStorage)</div>
+            <p className="text-[11px] text-amber-400/90">⚠️ Tab বন্ধ করলে keys মুছে যাবে — শেয়ার্ড ডিভাইসে keys rotate করুন।</p>
             {PROVIDERS.map((p) => (
               <div key={p.key} className="space-y-1">
                 <div className="flex items-center justify-between">

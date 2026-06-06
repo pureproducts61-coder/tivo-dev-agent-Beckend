@@ -2,10 +2,12 @@ import { useEffect, useState } from "react";
 import { Link } from "react-router-dom";
 
 // Local-only settings for Replit/Capacitor mobile build.
-// Keys are saved to localStorage and read by AI calls when mode === "local".
+// Keys are kept in sessionStorage so they are cleared when the tab closes
+// (avoids leaving plaintext API keys persisted in localStorage).
 type Mode = "cloud" | "local" | "hybrid";
 
-const LS_KEY = "tivo_hybrid_settings";
+const SS_KEY = "tivo_hybrid_settings";
+const LEGACY_LS_KEY = "tivo_hybrid_settings";
 
 interface Settings {
   mode: Mode;
@@ -27,19 +29,32 @@ const DEFAULTS: Settings = {
   githubToken: "",
 };
 
+function migrateFromLocalStorage(): string | null {
+  try {
+    const raw = localStorage.getItem(LEGACY_LS_KEY);
+    if (raw) {
+      sessionStorage.setItem(SS_KEY, raw);
+      localStorage.removeItem(LEGACY_LS_KEY);
+      return raw;
+    }
+  } catch {}
+  return null;
+}
+
 export default function HybridSettings() {
   const [s, setS] = useState<Settings>(DEFAULTS);
   const [saved, setSaved] = useState(false);
 
   useEffect(() => {
     try {
-      const raw = localStorage.getItem(LS_KEY);
+      const raw = sessionStorage.getItem(SS_KEY) || migrateFromLocalStorage();
       if (raw) setS({ ...DEFAULTS, ...JSON.parse(raw) });
     } catch {}
   }, []);
 
   function save() {
-    localStorage.setItem(LS_KEY, JSON.stringify(s));
+    sessionStorage.setItem(SS_KEY, JSON.stringify(s));
+    try { localStorage.removeItem(LEGACY_LS_KEY); } catch {}
     setSaved(true);
     setTimeout(() => setSaved(false), 1500);
   }
@@ -90,20 +105,23 @@ export default function HybridSettings() {
         </div>
 
         <div className="rounded-xl border border-zinc-800 p-4 space-y-3">
-          <div className="text-xs text-zinc-400 mb-1">API Keys (device-only, localStorage)</div>
+          <div className="text-xs text-zinc-400 mb-1">API Keys (tab-only, sessionStorage)</div>
           {field("geminiKey", "Gemini API Key", "AIza...")}
           {field("deepseekKey", "DeepSeek API Key", "sk-...")}
           {field("groqKey", "Groq API Key", "gsk_...")}
           {field("hfToken", "Hugging Face Token", "hf_...")}
           {field("tavilyKey", "Tavily Search Key", "tvly-...")}
           {field("githubToken", "GitHub Token", "ghp_...")}
+          <p className="text-[11px] text-amber-400/90 leading-relaxed">
+            ⚠️ Keys শুধু এই tab-এর জন্য মেমরিতে থাকে — tab বন্ধ করলে মুছে যাবে। শেয়ার্ড ডিভাইস হলে অবশ্যই keys rotate করুন।
+          </p>
         </div>
 
         <button
           onClick={save}
           className="w-full py-3 rounded-lg bg-amber-700 hover:bg-amber-600 font-medium transition"
         >
-          {saved ? "✓ Saved" : "Save Locally"}
+          {saved ? "✓ Saved" : "Save (this tab)"}
         </button>
 
         <p className="text-[11px] text-zinc-600 text-center">
@@ -116,7 +134,7 @@ export default function HybridSettings() {
 
 export function getHybridSettings(): Settings {
   try {
-    const raw = localStorage.getItem(LS_KEY);
+    const raw = sessionStorage.getItem(SS_KEY) || migrateFromLocalStorage();
     if (raw) return { ...DEFAULTS, ...JSON.parse(raw) };
   } catch {}
   return DEFAULTS;

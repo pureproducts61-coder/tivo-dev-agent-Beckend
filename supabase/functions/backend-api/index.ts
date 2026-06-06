@@ -454,7 +454,7 @@ serve(async (req) => {
         const c = createClient(supaUrl, supaAnon);
         const redirectTo = (b.redirect_to as string) || `${supaUrl}`;
         const { error } = await c.auth.signInWithOtp({ email, options: { emailRedirectTo: redirectTo } });
-        if (error) return jsonResponse({ ok: false, error: error.message }, 400);
+        if (error) { console.error("[auth_otp]", error); return jsonResponse({ ok: false, error: "Could not send magic link" }, 400); }
         return jsonResponse({ ok: true, sent: true, message: "Magic link পাঠানো হয়েছে — ইমেইল চেক করুন" });
       }
       if (b.method === "google") {
@@ -578,7 +578,7 @@ serve(async (req) => {
         .eq("details->>tenant_id", tenant.tenantId);
       if (actionFilter) query = query.eq("action", actionFilter);
       const { data, error } = await query;
-      if (error) return jsonResponse({ error: error.message }, 500);
+      if (error) return jsonResponse((console.error("[db_error]", error), { error: "Database operation failed" }), 500);
       return jsonResponse({ logs: data, tenant_id: tenant.tenantId });
     }
 
@@ -610,7 +610,7 @@ serve(async (req) => {
         .order("updated_at", { ascending: false }).limit(200);
       if (!isSuperAdmin) q = q.eq("tenant_id", tenant.tenantId);
       const { data, error } = await q;
-      if (error) return jsonResponse({ error: error.message }, 500);
+      if (error) return jsonResponse((console.error("[db_error]", error), { error: "Database operation failed" }), 500);
       return jsonResponse({ projects: data || [], tenant_id: tenant.tenantId, super_admin: isSuperAdmin });
     }
 
@@ -692,7 +692,7 @@ serve(async (req) => {
       const { data, error } = await supabase.from("system_memory").insert({
         tenant_id: writeTenant, kind, content, embedding, metadata, importance,
       }).select().single();
-      if (error) return jsonResponse({ error: error.message }, 500);
+      if (error) return jsonResponse((console.error("[db_error]", error), { error: "Database operation failed" }), 500);
       await audit("tivo", "memory_save", data.id, { kind, importance });
       return jsonResponse({ success: true, id: data.id });
     }
@@ -705,7 +705,7 @@ serve(async (req) => {
       if (kind) qb = qb.eq("kind", kind);
       if (q) qb = qb.ilike("content", `%${q}%`);
       const { data, error } = await qb;
-      if (error) return jsonResponse({ error: error.message }, 500);
+      if (error) return jsonResponse((console.error("[db_error]", error), { error: "Database operation failed" }), 500);
       return jsonResponse({ memories: data || [] });
     }
 
@@ -717,7 +717,7 @@ serve(async (req) => {
       const { data, error } = await supabase.from("proposed_changes").insert({
         tenant_id: writeTenant, title, description, change_type, payload, risk_level,
       }).select().single();
-      if (error) return jsonResponse({ error: error.message }, 500);
+      if (error) return jsonResponse((console.error("[db_error]", error), { error: "Database operation failed" }), 500);
       await notify(risk_level === "high" ? "warn" : "info", "🔔 New Proposed Change", title, { proposal_id: data.id, risk_level });
       await audit("tivo", "proposal_created", data.id, { title, risk_level });
       return jsonResponse({ success: true, proposal: data });
@@ -728,7 +728,7 @@ serve(async (req) => {
       let qb = tFilter(supabase.from("proposed_changes").select("*")).order("created_at", { ascending: false }).limit(100);
       if (status) qb = qb.eq("status", status);
       const { data, error } = await qb;
-      if (error) return jsonResponse({ error: error.message }, 500);
+      if (error) return jsonResponse((console.error("[db_error]", error), { error: "Database operation failed" }), 500);
       return jsonResponse({ proposals: data || [] });
     }
     if (action === "proposals/decide" && req.method === "POST") {
@@ -740,7 +740,7 @@ serve(async (req) => {
       const update: any = { status, reviewed_by: "super_admin", reviewed_at: new Date().toISOString() };
       if (decision === "edit" && edited_payload) update.payload = edited_payload;
       const { data, error } = await supabase.from("proposed_changes").update(update).eq("id", id).select().single();
-      if (error) return jsonResponse({ error: error.message }, 500);
+      if (error) return jsonResponse((console.error("[db_error]", error), { error: "Database operation failed" }), 500);
       await audit("super_admin", `proposal_${decision}`, id, { note });
       await notify("info", `Proposal ${decision}d`, data.title, { proposal_id: id });
       return jsonResponse({ success: true, proposal: data });
@@ -782,7 +782,7 @@ serve(async (req) => {
       let qb = tFilter(supabase.from("notifications").select("*")).order("created_at", { ascending: false }).limit(100);
       if (unreadOnly) qb = qb.is("read_at", null);
       const { data, error } = await qb;
-      if (error) return jsonResponse({ error: error.message }, 500);
+      if (error) return jsonResponse((console.error("[db_error]", error), { error: "Database operation failed" }), 500);
       return jsonResponse({ notifications: data || [] });
     }
     if (action === "notifications/mark-read" && req.method === "POST") {
@@ -793,7 +793,7 @@ serve(async (req) => {
       if (!all && ids.length) q = q.in("id", ids);
       else if (!all) return jsonResponse({ error: "ids or all required" }, 400);
       const { error } = await q.is("read_at", null);
-      if (error) return jsonResponse({ error: error.message }, 500);
+      if (error) return jsonResponse((console.error("[db_error]", error), { error: "Database operation failed" }), 500);
       return jsonResponse({ success: true });
     }
     if (action === "notifications/mark-all-read" && req.method === "POST") {
@@ -802,7 +802,7 @@ serve(async (req) => {
       let q = supabase.from("notifications").update({ read_at: new Date().toISOString() });
       if (!isSA) q = q.eq("tenant_id", T);
       const { error } = await q.is("read_at", null);
-      if (error) return jsonResponse({ error: error.message }, 500);
+      if (error) return jsonResponse((console.error("[db_error]", error), { error: "Database operation failed" }), 500);
       return jsonResponse({ success: true });
     }
 
@@ -815,7 +815,7 @@ serve(async (req) => {
         .select("user_id,display_name,credits,is_blocked,created_at")
         .order("created_at", { ascending: false })
         .limit(500);
-      if (error) return jsonResponse({ error: error.message }, 500);
+      if (error) return jsonResponse((console.error("[db_error]", error), { error: "Database operation failed" }), 500);
       return jsonResponse({ users: data || [] });
     }
     if (action === "users/set-blocked" && req.method === "POST") {
@@ -830,7 +830,7 @@ serve(async (req) => {
         _is_blocked: is_blocked,
         _credits: null,
       });
-      if (error) return jsonResponse({ error: error.message }, 500);
+      if (error) return jsonResponse((console.error("[db_error]", error), { error: "Database operation failed" }), 500);
       await audit("super_admin", is_blocked ? "user_block" : "user_unblock", user_id, {});
       return jsonResponse({ success: true, profile: data });
     }
@@ -842,7 +842,7 @@ serve(async (req) => {
       if (!supabase) return jsonResponse({ error: "DB unavailable" }, 503);
       const { data, error } = await tFilter(supabase.from("audit_logs").select("*"))
         .order("created_at", { ascending: false }).limit(200);
-      if (error) return jsonResponse({ error: error.message }, 500);
+      if (error) return jsonResponse((console.error("[db_error]", error), { error: "Database operation failed" }), 500);
       return jsonResponse({ logs: data || [] });
     }
 
@@ -852,7 +852,7 @@ serve(async (req) => {
       const { label = "manual", data = {} } = body;
       const { data: snap, error } = await supabase.from("system_snapshots")
         .insert({ tenant_id: writeTenant, label, data }).select().single();
-      if (error) return jsonResponse({ error: error.message }, 500);
+      if (error) return jsonResponse((console.error("[db_error]", error), { error: "Database operation failed" }), 500);
       await audit(isSA ? "super_admin" : "tivo", "snapshot_create", snap.id, { label });
       return jsonResponse({ success: true, snapshot: snap });
     }
@@ -860,7 +860,7 @@ serve(async (req) => {
       if (!supabase) return jsonResponse({ error: "DB unavailable" }, 503);
       const { data, error } = await tFilter(supabase.from("system_snapshots").select("id,label,created_at"))
         .order("created_at", { ascending: false }).limit(50);
-      if (error) return jsonResponse({ error: error.message }, 500);
+      if (error) return jsonResponse((console.error("[db_error]", error), { error: "Database operation failed" }), 500);
       return jsonResponse({ snapshots: data || [] });
     }
 
@@ -874,14 +874,14 @@ serve(async (req) => {
         metadata: i.metadata || {}, updated_at: new Date().toISOString(),
       }));
       const { error } = await supabase.from("system_map").upsert(rows, { onConflict: "tenant_id,kind,name" });
-      if (error) return jsonResponse({ error: error.message }, 500);
+      if (error) return jsonResponse((console.error("[db_error]", error), { error: "Database operation failed" }), 500);
       return jsonResponse({ success: true, count: rows.length });
     }
     if (action === "system-map/list") {
       if (!supabase) return jsonResponse({ error: "DB unavailable" }, 503);
       const { data, error } = await tFilter(supabase.from("system_map").select("*"))
         .order("kind").order("name").limit(500);
-      if (error) return jsonResponse({ error: error.message }, 500);
+      if (error) return jsonResponse((console.error("[db_error]", error), { error: "Database operation failed" }), 500);
       return jsonResponse({ map: data || [] });
     }
 
@@ -893,7 +893,7 @@ serve(async (req) => {
       const ip = source_ip || req.headers.get("cf-connecting-ip") || req.headers.get("x-forwarded-for") || "";
       const { data, error } = await supabase.from("security_events")
         .insert({ tenant_id: writeTenant, threat_type, severity, source_ip: ip, payload, blocked }).select().single();
-      if (error) return jsonResponse({ error: error.message }, 500);
+      if (error) return jsonResponse((console.error("[db_error]", error), { error: "Database operation failed" }), 500);
       await notify(severity === "critical" || severity === "high" ? "error" : "warn",
         `🛡️ Threat: ${threat_type}`, `Source: ${ip} • ${blocked ? "BLOCKED" : "DETECTED"}`, { event_id: data.id });
       return jsonResponse({ success: true, id: data.id });
@@ -902,7 +902,7 @@ serve(async (req) => {
       if (!supabase) return jsonResponse({ error: "DB unavailable" }, 503);
       const { data, error } = await tFilter(supabase.from("security_events").select("*"))
         .order("created_at", { ascending: false }).limit(200);
-      if (error) return jsonResponse({ error: error.message }, 500);
+      if (error) return jsonResponse((console.error("[db_error]", error), { error: "Database operation failed" }), 500);
       return jsonResponse({ events: data || [] });
     }
 
@@ -1013,7 +1013,7 @@ serve(async (req) => {
       const { error } = await supabase.from("system_credentials").upsert({
         tenant_id: writeTenant, key_name, value, description, is_active,
       }, { onConflict: "tenant_id,key_name" });
-      if (error) return jsonResponse({ error: error.message }, 500);
+      if (error) return jsonResponse((console.error("[db_error]", error), { error: "Database operation failed" }), 500);
       await supabase.from("credential_history").insert({
         tenant_id: writeTenant, key_name, action: prev ? "rotate" : "create",
         actor: "super_admin", old_preview: oldPreview, new_preview: newPreview, notes: description || "",
@@ -1029,7 +1029,7 @@ serve(async (req) => {
       const { key_name } = body;
       if (!key_name) return jsonResponse({ error: "key_name required" }, 400);
       const { error } = await tFilter(supabase.from("system_credentials").delete()).eq("key_name", key_name);
-      if (error) return jsonResponse({ error: error.message }, 500);
+      if (error) return jsonResponse((console.error("[db_error]", error), { error: "Database operation failed" }), 500);
       await supabase.from("credential_history").insert({
         tenant_id: writeTenant, key_name, action: "delete", actor: "super_admin",
       });
@@ -1142,7 +1142,7 @@ serve(async (req) => {
         .order("created_at", { ascending: false }).limit(100);
       if (k) q = q.eq("key_name", k);
       const { data, error } = await q;
-      if (error) return jsonResponse({ error: error.message }, 500);
+      if (error) return jsonResponse((console.error("[db_error]", error), { error: "Database operation failed" }), 500);
       return jsonResponse({ history: data || [] });
     }
 
@@ -1164,7 +1164,7 @@ serve(async (req) => {
       const { error } = await supabase.from("cost_tracking").insert({
         tenant_id: writeTenant, provider, model, tokens_in, tokens_out, cost_usd, metadata,
       });
-      if (error) return jsonResponse({ error: error.message }, 500);
+      if (error) return jsonResponse((console.error("[db_error]", error), { error: "Database operation failed" }), 500);
       // Budget check
       const { data: ks } = await supabase.from("kill_switch_state").select("*").eq("tenant_id", writeTenant).maybeSingle();
       if (ks?.daily_budget_usd && +ks.daily_budget_usd > 0) {
@@ -1214,7 +1214,7 @@ serve(async (req) => {
         if (k in body) update[k] = body[k];
       }
       const { error } = await supabase.from("kill_switch_state").upsert(update, { onConflict: "tenant_id" });
-      if (error) return jsonResponse({ error: error.message }, 500);
+      if (error) return jsonResponse((console.error("[db_error]", error), { error: "Database operation failed" }), 500);
       await audit("super_admin", "kill_switch.update", "global", update);
       await notify(update.external_apis_enabled === false ? "error" : "warn",
         "🚨 Kill Switch Updated",
@@ -1254,9 +1254,18 @@ serve(async (req) => {
         const dump: any = {};
         for (const t of tables) {
           const { data } = await tFilter(supabase.from(t).select("*")).limit(2000);
-          dump[t] = data || [];
+          let rows = data || [];
+          // Mask plaintext credential values so backup snapshots never concentrate raw secrets.
+          if (t === "system_credentials") {
+            rows = rows.map((r: any) => {
+              const v: string = typeof r?.value === "string" ? r.value : "";
+              const masked = v ? `${v.slice(0, 3)}••••${v.slice(-3)}` : "";
+              return { ...r, value: masked, value_masked: true };
+            });
+          }
+          dump[t] = rows;
         }
-        const payload = { taken_at: new Date().toISOString(), tables: dump };
+        const payload = { taken_at: new Date().toISOString(), tables: dump, credentials_masked: true };
         const size = JSON.stringify(payload).length;
         const { data: snap } = await supabase.from("system_snapshots").insert({
           tenant_id: writeTenant, label: `auto-backup ${new Date().toISOString().slice(0, 10)}`, data: payload,
@@ -1265,20 +1274,21 @@ serve(async (req) => {
           tenant_id: writeTenant, status: "ok", destination: "snapshot",
           size_bytes: size, payload: { snapshot_id: snap?.id, ms: Date.now() - started },
         }).select().single();
-        await audit("super_admin", "backup.run", run?.id || "", { size, snapshot_id: snap?.id });
+        await audit("super_admin", "backup.run", run?.id || "", { size, snapshot_id: snap?.id, credentials_masked: true });
         await notify("info", "💾 Backup Complete", `${(size / 1024).toFixed(1)} KB • ${tables.length} tables`, {});
         return jsonResponse({ success: true, snapshot_id: snap?.id, size_bytes: size });
       } catch (e) {
         const msg = e instanceof Error ? e.message : String(e);
+        console.error("[backup_run]", msg);
         await supabase.from("backup_runs").insert({ tenant_id: writeTenant, status: "error", error: msg });
-        return jsonResponse({ error: msg }, 500);
+        return jsonResponse({ error: "Backup failed" }, 500);
       }
     }
     if (action === "backup/list") {
       if (!supabase) return jsonResponse({ error: "DB unavailable" }, 503);
       const { data, error } = await tFilter(supabase.from("backup_runs").select("*"))
         .order("created_at", { ascending: false }).limit(50);
-      if (error) return jsonResponse({ error: error.message }, 500);
+      if (error) return jsonResponse((console.error("[db_error]", error), { error: "Database operation failed" }), 500);
       return jsonResponse({ backups: data || [] });
     }
 

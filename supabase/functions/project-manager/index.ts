@@ -128,7 +128,7 @@ serve(async (req) => {
       if (user_id) query = query.eq("user_id", user_id);
       if (status) query = query.eq("status", status);
       const { data, error } = await query;
-      if (error) return jsonResponse({ error: error.message }, 500);
+      if (error) return jsonResponse((console.error("[db_error]", error), { error: "Database operation failed" }), 500);
       return jsonResponse({ projects: data, tenant_id: tenantId });
     }
 
@@ -137,7 +137,7 @@ serve(async (req) => {
       const id = url.searchParams.get("id");
       if (!id) return jsonResponse({ error: "id required" }, 400);
       const { data, error } = await scope(supabase.from("projects").select("*").eq("id", id)).maybeSingle();
-      if (error) return jsonResponse({ error: error.message }, 500);
+      if (error) return jsonResponse((console.error("[db_error]", error), { error: "Database operation failed" }), 500);
       if (!data) return jsonResponse({ error: "Not found or access denied" }, 404);
       return jsonResponse({ project: data });
     }
@@ -147,7 +147,7 @@ serve(async (req) => {
       const id = url.searchParams.get("id");
       if (!id) return jsonResponse({ error: "id required" }, 400);
       const { data, error } = await scope(supabase.from("projects").select("version_history, build_metadata").eq("id", id)).maybeSingle();
-      if (error) return jsonResponse({ error: error.message }, 500);
+      if (error) return jsonResponse((console.error("[db_error]", error), { error: "Database operation failed" }), 500);
       if (!data) return jsonResponse({ error: "Not found or access denied" }, 404);
       return jsonResponse({ versions: data?.version_history || [], metadata: data?.build_metadata || {} });
     }
@@ -172,7 +172,7 @@ serve(async (req) => {
         version_history: [{ version: 1, timestamp: new Date().toISOString(), note: "Initial creation" }],
       }).select().single();
 
-      if (error) return jsonResponse({ error: error.message }, 500);
+      if (error) return jsonResponse((console.error("[db_error]", error), { error: "Database operation failed" }), 500);
 
       // Upload initial files
       if (files?.length && data?.id) {
@@ -229,7 +229,7 @@ serve(async (req) => {
       }
 
       const { error } = await supabase.from("projects").update(updates).eq("id", id).eq("tenant_id", tenantId);
-      if (error) return jsonResponse({ error: error.message }, 500);
+      if (error) return jsonResponse((console.error("[db_error]", error), { error: "Database operation failed" }), 500);
       return jsonResponse({ success: true });
     }
 
@@ -251,7 +251,7 @@ serve(async (req) => {
       await deleteFolder(id);
 
       const { error } = await supabase.from("projects").delete().eq("id", id).eq("tenant_id", tenantId);
-      if (error) return jsonResponse({ error: error.message }, 500);
+      if (error) return jsonResponse((console.error("[db_error]", error), { error: "Database operation failed" }), 500);
       return jsonResponse({ success: true });
     }
 
