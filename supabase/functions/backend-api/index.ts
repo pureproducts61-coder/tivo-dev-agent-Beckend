@@ -454,7 +454,7 @@ serve(async (req) => {
         const c = createClient(supaUrl, supaAnon);
         const redirectTo = (b.redirect_to as string) || `${supaUrl}`;
         const { error } = await c.auth.signInWithOtp({ email, options: { emailRedirectTo: redirectTo } });
-        if (error) return jsonResponse({ ok: false, error: error.message }, 400);
+        if (error) { console.error("[auth_otp]", error); return jsonResponse({ ok: false, error: "Could not send magic link" }, 400); }
         return jsonResponse({ ok: true, sent: true, message: "Magic link পাঠানো হয়েছে — ইমেইল চেক করুন" });
       }
       if (b.method === "google") {
