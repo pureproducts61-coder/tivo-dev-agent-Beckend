@@ -1,9 +1,10 @@
 import { useEffect, useRef, useState } from "react";
 import { Sparkles } from "lucide-react";
 import { useSuperAdmin } from "@/contexts/SuperAdminContext";
-import { ChatMessage, ChatMsg, Artifact } from "@/components/chat/ChatMessage";
+import { ChatMessage, ChatMsg, Artifact, validateArtifact } from "@/components/chat/ChatMessage";
 import { ChatInput, ActionIcons } from "@/components/chat/ChatInput";
 import { SecurityScanPanel } from "@/components/chat/SecurityScanPanel";
+import { supabase } from "@/integrations/supabase/client";
 
 const BACKEND = import.meta.env.VITE_SUPABASE_URL;
 
@@ -18,17 +19,27 @@ The UI will render those as one-click download cards.
 
 Reply in the user's language. Use markdown. Be concise but thorough.`;
 
-function extractArtifacts(content: string): { clean: string; artifacts: Artifact[] } {
+function extractArtifacts(content: string): { clean: string; artifacts: Artifact[]; invalidJson?: string } {
   const re = /```tivo-artifacts\s*([\s\S]*?)```/g;
   const out: Artifact[] = [];
+  let invalidJson: string | undefined;
   const clean = content.replace(re, (_m, json) => {
     try {
       const arr = JSON.parse(json);
-      if (Array.isArray(arr)) out.push(...arr);
-    } catch {}
+      if (Array.isArray(arr)) {
+        for (const raw of arr) {
+          const v = validateArtifact(raw);
+          if (v) out.push(v);
+        }
+      } else {
+        invalidJson = json;
+      }
+    } catch {
+      invalidJson = json;
+    }
     return "";
   }).trim();
-  return { clean, artifacts: out };
+  return { clean, artifacts: out, invalidJson };
 }
 
 function uid() {
