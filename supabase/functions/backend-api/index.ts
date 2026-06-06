@@ -1254,9 +1254,18 @@ serve(async (req) => {
         const dump: any = {};
         for (const t of tables) {
           const { data } = await tFilter(supabase.from(t).select("*")).limit(2000);
-          dump[t] = data || [];
+          let rows = data || [];
+          // Mask plaintext credential values so backup snapshots never concentrate raw secrets.
+          if (t === "system_credentials") {
+            rows = rows.map((r: any) => {
+              const v: string = typeof r?.value === "string" ? r.value : "";
+              const masked = v ? `${v.slice(0, 3)}••••${v.slice(-3)}` : "";
+              return { ...r, value: masked, value_masked: true };
+            });
+          }
+          dump[t] = rows;
         }
-        const payload = { taken_at: new Date().toISOString(), tables: dump };
+        const payload = { taken_at: new Date().toISOString(), tables: dump, credentials_masked: true };
         const size = JSON.stringify(payload).length;
         const { data: snap } = await supabase.from("system_snapshots").insert({
           tenant_id: writeTenant, label: `auto-backup ${new Date().toISOString().slice(0, 10)}`, data: payload,
@@ -1265,13 +1274,14 @@ serve(async (req) => {
           tenant_id: writeTenant, status: "ok", destination: "snapshot",
           size_bytes: size, payload: { snapshot_id: snap?.id, ms: Date.now() - started },
         }).select().single();
-        await audit("super_admin", "backup.run", run?.id || "", { size, snapshot_id: snap?.id });
+        await audit("super_admin", "backup.run", run?.id || "", { size, snapshot_id: snap?.id, credentials_masked: true });
         await notify("info", "💾 Backup Complete", `${(size / 1024).toFixed(1)} KB • ${tables.length} tables`, {});
         return jsonResponse({ success: true, snapshot_id: snap?.id, size_bytes: size });
       } catch (e) {
         const msg = e instanceof Error ? e.message : String(e);
+        console.error("[backup_run]", msg);
         await supabase.from("backup_runs").insert({ tenant_id: writeTenant, status: "error", error: msg });
-        return jsonResponse({ error: msg }, 500);
+        return jsonResponse({ error: "Backup failed" }, 500);
       }
     }
     if (action === "backup/list") {
