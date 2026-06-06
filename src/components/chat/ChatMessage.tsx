@@ -200,7 +200,19 @@ export function ChatMessage({
     );
   }
 
-  // assistant / system
+  // system / status — slim centered pill, no markdown
+  if (msg.role === "system" || msg.role === "status") {
+    return (
+      <div className="flex justify-center animate-fade-in">
+        <div className="inline-flex items-center gap-2 px-3 py-1.5 rounded-full bg-zinc-900/80 border border-zinc-800 text-[11px] text-zinc-400 max-w-[90%]">
+          <span className="w-1.5 h-1.5 rounded-full bg-amber-400" />
+          <span className="truncate">{msg.content}</span>
+        </div>
+      </div>
+    );
+  }
+
+  // assistant
   return (
     <div className="group flex justify-start animate-fade-in">
       <div className="max-w-[92%] sm:max-w-[85%] space-y-1.5">
@@ -226,6 +238,16 @@ export function ChatMessage({
                 <ArtifactCard key={i} a={a} />
               ))}
             </div>
+          )}
+          {msg.invalidArtifactJson && (
+            <details className="mt-3 rounded-lg border border-amber-900/40 bg-amber-950/20 px-3 py-2 text-[11px]">
+              <summary className="cursor-pointer text-amber-300">
+                ⚠️ Artifact JSON could not be parsed — view raw
+              </summary>
+              <pre className="mt-2 max-h-40 overflow-auto text-amber-200/80 whitespace-pre-wrap break-all">
+                {msg.invalidArtifactJson}
+              </pre>
+            </details>
           )}
         </div>
         {msg.content && (
