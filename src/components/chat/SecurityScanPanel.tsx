@@ -22,7 +22,10 @@ export function SecurityScanPanel({ open, onClose }: { open: boolean; onClose: (
   const [error, setError] = useState<string | null>(null);
 
   async function scan() {
-    if (!session) return;
+    if (!session) {
+      setError("Session expired — please log in again.");
+      return;
+    }
     setLoading(true);
     setError(null);
     try {
@@ -31,6 +34,7 @@ export function SecurityScanPanel({ open, onClose }: { open: boolean; onClose: (
         headers: { "x-master-secret": session.masterSecret, "Content-Type": "application/json" },
         body: "{}",
       });
+      if (!res.ok) throw new Error(`HTTP ${res.status} ${res.statusText}`);
       const data = await res.json().catch(() => ({}));
       const items: Finding[] = (data.findings || data.items || []).map((f: any, i: number) => ({
         id: f.id || `${i}`,
@@ -43,7 +47,7 @@ export function SecurityScanPanel({ open, onClose }: { open: boolean; onClose: (
       setFindings(items);
       setRan(true);
     } catch (e: any) {
-      setError(e.message || "Scan failed");
+      setError(e?.message || "Scan failed — check backend logs.");
     } finally {
       setLoading(false);
     }
@@ -52,15 +56,19 @@ export function SecurityScanPanel({ open, onClose }: { open: boolean; onClose: (
   async function fixOne(id: string) {
     if (!session) return;
     setFixing(id);
+    setError(null);
     try {
-      await fetch(`${BACKEND}/functions/v1/backend-api/security/fix`, {
+      const res = await fetch(`${BACKEND}/functions/v1/backend-api/security/fix`, {
         method: "POST",
         headers: { "x-master-secret": session.masterSecret, "Content-Type": "application/json" },
         body: JSON.stringify({ id }),
       });
+      if (!res.ok) throw new Error(`Fix failed — HTTP ${res.status}`);
+      const data = await res.json().catch(() => ({}));
+      if (data?.ok === false) throw new Error(data?.error || "Backend refused fix");
       setFindings((f) => f.filter((x) => x.id !== id));
-    } catch {
-      // ignore
+    } catch (e: any) {
+      setError(e?.message || "Fix failed");
     } finally {
       setFixing(null);
     }
