@@ -9,6 +9,7 @@ export interface Artifact {
   mime?: string;
   size?: number;
   base64?: string;
+  error?: string;
 }
 
 export interface ChatMsg {
@@ -17,10 +18,33 @@ export interface ChatMsg {
   content: string;
   files?: { name: string; type: string; size: number }[];
   artifacts?: Artifact[];
+  invalidArtifactJson?: string;
   ts: number;
 }
 
 const COLLAPSE_LIMIT = 380;
+
+export function validateArtifact(a: any): Artifact | null {
+  if (!a || typeof a !== "object") return null;
+  const name = typeof a.name === "string" && a.name.trim() ? a.name.trim() : null;
+  if (!name) return null;
+  const url = typeof a.url === "string" ? a.url : undefined;
+  const base64 = typeof a.base64 === "string" ? a.base64 : undefined;
+  if (!url && !base64) {
+    return { name, mime: a.mime, size: a.size, error: "No url or base64 data" };
+  }
+  // Restrict url protocols to http(s) / data / blob for safety
+  if (url && !/^(https?:|data:|blob:)/i.test(url)) {
+    return { name, mime: a.mime, size: a.size, error: "Unsafe URL scheme" };
+  }
+  return {
+    name,
+    url,
+    base64,
+    mime: typeof a.mime === "string" ? a.mime : undefined,
+    size: typeof a.size === "number" ? a.size : undefined,
+  };
+}
 
 function CopyBtn({ text }: { text: string }) {
   const [done, setDone] = useState(false);
@@ -42,12 +66,25 @@ function CopyBtn({ text }: { text: string }) {
 
 function ArtifactCard({ a }: { a: Artifact }) {
   const href = a.url || (a.base64 ? `data:${a.mime || "application/octet-stream"};base64,${a.base64}` : undefined);
+  if (a.error || !href) {
+    return (
+      <div className="flex items-center gap-3 rounded-xl border border-red-900/50 bg-red-950/20 px-3 py-2.5">
+        <div className="shrink-0 w-9 h-9 rounded-lg bg-red-900/30 border border-red-800/40 flex items-center justify-center">
+          <FileText className="w-4 h-4 text-red-400" />
+        </div>
+        <div className="min-w-0 flex-1">
+          <div className="text-sm font-medium truncate">{a.name}</div>
+          <div className="text-[11px] text-red-300/80 truncate">{a.error || "No download source"}</div>
+        </div>
+      </div>
+    );
+  }
   return (
     <a
       href={href}
       download={a.name}
       target="_blank"
-      rel="noreferrer"
+      rel="noreferrer noopener"
       className="group flex items-center gap-3 rounded-xl border border-zinc-800 bg-zinc-900/60 px-3 py-2.5 hover:border-amber-700/60 hover:bg-zinc-900 transition"
     >
       <div className="shrink-0 w-9 h-9 rounded-lg bg-gradient-to-br from-amber-600/30 to-amber-900/20 border border-amber-800/40 flex items-center justify-center">
@@ -163,7 +200,19 @@ export function ChatMessage({
     );
   }
 
-  // assistant / system
+  // system / status — slim centered pill, no markdown
+  if (msg.role === "system" || msg.role === "status") {
+    return (
+      <div className="flex justify-center animate-fade-in">
+        <div className="inline-flex items-center gap-2 px-3 py-1.5 rounded-full bg-zinc-900/80 border border-zinc-800 text-[11px] text-zinc-400 max-w-[90%]">
+          <span className="w-1.5 h-1.5 rounded-full bg-amber-400" />
+          <span className="truncate">{msg.content}</span>
+        </div>
+      </div>
+    );
+  }
+
+  // assistant
   return (
     <div className="group flex justify-start animate-fade-in">
       <div className="max-w-[92%] sm:max-w-[85%] space-y-1.5">
@@ -189,6 +238,16 @@ export function ChatMessage({
                 <ArtifactCard key={i} a={a} />
               ))}
             </div>
+          )}
+          {msg.invalidArtifactJson && (
+            <details className="mt-3 rounded-lg border border-amber-900/40 bg-amber-950/20 px-3 py-2 text-[11px]">
+              <summary className="cursor-pointer text-amber-300">
+                ⚠️ Artifact JSON could not be parsed — view raw
+              </summary>
+              <pre className="mt-2 max-h-40 overflow-auto text-amber-200/80 whitespace-pre-wrap break-all">
+                {msg.invalidArtifactJson}
+              </pre>
+            </details>
           )}
         </div>
         {msg.content && (

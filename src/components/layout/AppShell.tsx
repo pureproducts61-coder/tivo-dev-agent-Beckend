@@ -115,7 +115,7 @@ function BottomTabs() {
     { to: "/super-admin/app/system", icon: "⚙️", label: "System" },
   ];
   return (
-    <nav className="sticky bottom-0 z-30 bg-zinc-950/95 backdrop-blur border-t border-zinc-800 grid grid-cols-4">
+    <nav className="sticky bottom-0 z-30 bg-zinc-950/95 backdrop-blur border-t border-zinc-800 grid grid-cols-4 md:hidden pb-[env(safe-area-inset-bottom)]">
       {tabs.map((t) => (
         <NavLink
           key={t.to}
@@ -128,6 +128,32 @@ function BottomTabs() {
         >
           <span className="text-lg">{t.icon}</span>
           <span>{t.label}</span>
+        </NavLink>
+      ))}
+    </nav>
+  );
+}
+
+function DesktopTabs() {
+  const tabs = [
+    { to: "/super-admin/app/chats", label: "💬 Chats" },
+    { to: "/super-admin/app/projects", label: "📦 Projects" },
+    { to: "/super-admin/app/users", label: "👥 Users" },
+    { to: "/super-admin/app/system", label: "⚙️ System" },
+  ];
+  return (
+    <nav className="hidden md:flex items-center gap-1">
+      {tabs.map((t) => (
+        <NavLink
+          key={t.to}
+          to={t.to}
+          className={({ isActive }) =>
+            `px-3 py-1.5 text-xs rounded-lg transition ${
+              isActive ? "bg-amber-700 text-white" : "text-zinc-400 hover:bg-zinc-900"
+            }`
+          }
+        >
+          {t.label}
         </NavLink>
       ))}
     </nav>
@@ -149,26 +175,33 @@ export function AppShell({ children }: { children?: ReactNode }) {
 
   return (
     <div className="min-h-screen bg-zinc-950 text-zinc-100 flex flex-col">
-      <header className="sticky top-0 z-30 bg-zinc-950/95 backdrop-blur border-b border-zinc-800 flex items-center justify-between px-3 py-2">
-        <button onClick={() => setDrawer(true)} className="p-2 rounded-lg hover:bg-zinc-900" aria-label="Menu">
-          <span className="text-xl">☰</span>
-        </button>
-        <Link to="/super-admin/app/chats" className="font-bold text-amber-500 tracking-wide">
-          TIVO
-        </Link>
-        <div className="flex items-center gap-1">
-          <BellButton onClick={() => setAlertsOpen(true)} count={unreadCount} />
-          <button
-            onClick={() => setSettingsOpen(true)}
-            className="p-2 rounded-lg hover:bg-zinc-900"
-            aria-label="Settings"
-          >
-            <span className="text-xl">⚙️</span>
-          </button>
+      <header className="sticky top-0 z-30 bg-zinc-950/95 backdrop-blur border-b border-zinc-800">
+        <div className="max-w-6xl mx-auto flex items-center justify-between px-3 py-2 gap-2">
+          <div className="flex items-center gap-2">
+            <button onClick={() => setDrawer(true)} className="p-2 rounded-lg hover:bg-zinc-900 md:hidden" aria-label="Menu">
+              <span className="text-xl">☰</span>
+            </button>
+            <Link to="/super-admin/app/chats" className="font-bold text-amber-500 tracking-wide">
+              TIVO
+            </Link>
+          </div>
+          <DesktopTabs />
+          <div className="flex items-center gap-1">
+            <BellButton onClick={() => setAlertsOpen(true)} count={unreadCount} />
+            <button
+              onClick={() => setSettingsOpen(true)}
+              className="p-2 rounded-lg hover:bg-zinc-900"
+              aria-label="Settings"
+            >
+              <span className="text-xl">⚙️</span>
+            </button>
+          </div>
         </div>
       </header>
 
-      <main className="flex-1 overflow-y-auto">{children ?? <Outlet />}</main>
+      <main className="flex-1 overflow-y-auto">
+        <div className="max-w-6xl mx-auto w-full h-full">{children ?? <Outlet />}</div>
+      </main>
 
       <BottomTabs />
 
