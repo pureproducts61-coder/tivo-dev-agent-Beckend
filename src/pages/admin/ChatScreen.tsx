@@ -337,6 +337,90 @@ export default function ChatScreen() {
       desc: "Scan & fix vulnerabilities",
       onClick: () => setScanOpen(true),
     },
+    {
+      id: "variables",
+      label: "AI Variables",
+      icon: ActionIcons.KeyRound,
+      desc: "Key/Value AI access",
+      onClick: () => setVarsOpen(true),
+    },
+    {
+      id: "rename",
+      label: "Rename Project",
+      icon: ActionIcons.Pencil,
+      desc: "Edit project name",
+      onClick: () =>
+        withProject("Renaming", async (id) => {
+          const name = window.prompt("নতুন project name:");
+          if (!name?.trim()) throw new Error("Cancelled");
+          const { error } = await supabase.from("projects").update({ name: name.trim() }).eq("id", id);
+          if (error) throw new Error(error.message);
+        }),
+    },
+    {
+      id: "analytics",
+      label: "Analytics",
+      icon: ActionIcons.BarChart3,
+      desc: "Build & deploy metrics",
+      onClick: () =>
+        withProject("Loading analytics", async (id) => {
+          const data = await backendCall("project-manager", `analytics?id=${id}`, null, "GET").catch(() => null);
+          pushSystem("📊 Analytics:\n```json\n" + JSON.stringify(data ?? { note: "no data" }, null, 2) + "\n```");
+        }),
+    },
+    {
+      id: "visitors",
+      label: "Visitors",
+      icon: ActionIcons.Users,
+      desc: "Live visitor stats",
+      onClick: () =>
+        withProject("Fetching visitors", async (id) => {
+          const data = await backendCall("project-manager", `visitors?id=${id}`, null, "GET").catch(() => null);
+          pushSystem("👥 Visitors:\n```json\n" + JSON.stringify(data ?? { note: "no data" }, null, 2) + "\n```");
+        }),
+    },
+    {
+      id: "performance",
+      label: "Performance",
+      icon: ActionIcons.Gauge,
+      desc: "Speed & uptime",
+      onClick: () =>
+        withProject("Profiling", async (id) => {
+          const data = await backendCall("project-manager", `performance?id=${id}`, null, "GET").catch(() => null);
+          pushSystem("⚡ Performance:\n```json\n" + JSON.stringify(data ?? { note: "no data" }, null, 2) + "\n```");
+        }),
+    },
+    {
+      id: "reopen",
+      label: "Reopen Project",
+      icon: ActionIcons.RotateCcw,
+      desc: "Restore archived project",
+      onClick: () =>
+        withProject("Reopening", async (id) => {
+          const { error } = await supabase.from("projects").update({ archived: false } as any).eq("id", id);
+          if (error) throw new Error(error.message);
+        }),
+    },
+    {
+      id: "delete",
+      label: "Delete Project",
+      icon: ActionIcons.Trash2,
+      desc: "Permanently remove",
+      tone: "danger" as const,
+      onClick: () =>
+        withProject("Deleting", async (id) => {
+          if (!confirm("সত্যিই delete করবে? এটা undo করা যাবে না।")) throw new Error("Cancelled");
+          const { error } = await supabase.from("projects").delete().eq("id", id);
+          if (error) throw new Error(error.message);
+        }),
+    },
+  ];
+
+  const quickActions = [
+    { id: "publish", label: "Publish", icon: Globe, onClick: actions.find((a) => a.id === "publish")!.onClick },
+    { id: "update", label: "Update", icon: RefreshCw, onClick: actions.find((a) => a.id === "update")!.onClick },
+    { id: "security", label: "Security", icon: ShieldCheck, onClick: () => setScanOpen(true) },
+    { id: "variables", label: "Variables", icon: KeyRound, onClick: () => setVarsOpen(true) },
   ];
 
   return (
