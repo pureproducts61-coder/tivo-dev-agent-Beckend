@@ -561,9 +561,10 @@ serve(async (req) => {
           sql_to_run: TENANT_SCHEMA_SQL,
         });
       } catch (e) {
+        console.error("[setup-custom-db]", e);
         return jsonResponse({
           success: false,
-          error: e instanceof Error ? e.message : String(e),
+          error: "Database not available",
           sql_to_run: TENANT_SCHEMA_SQL,
         }, 500);
       }
@@ -628,7 +629,7 @@ serve(async (req) => {
       const { data: row, error: oe } = await owner.maybeSingle();
       if (oe || !row) return jsonResponse({ error: "Project not found or not yours" }, 404);
       const { error: ue } = await supabase.from("projects").update({ build_status: status, updated_at: new Date().toISOString() }).eq("id", project_id);
-      if (ue) return jsonResponse({ error: ue.message }, 500);
+      if (ue) { console.error("[db_error]", ue); return jsonResponse({ error: "Database operation failed" }, 500); }
       await supabase.from("memory_logs").insert({
         action: "kill_switch",
         details: { tenant_id: tenant.tenantId, project_id, new_status: status },
@@ -1129,8 +1130,9 @@ serve(async (req) => {
         return jsonResponse({ ok, provider, detail, latency_ms: ms });
       } catch (e) {
         const msg = e instanceof Error ? e.message : String(e);
+        console.error("[credential.test_error]", msg);
         await audit("super_admin", "credential.test_error", provider, { error: msg });
-        return jsonResponse({ ok: false, provider, detail: msg, latency_ms: Date.now() - started }, 200);
+        return jsonResponse({ ok: false, provider, detail: "Credential test failed", latency_ms: Date.now() - started }, 200);
       }
     }
 
@@ -1338,15 +1340,16 @@ serve(async (req) => {
         return jsonResponse({ success: true, steps });
       } catch (e) {
         const msg = e instanceof Error ? e.message : String(e);
+        console.error("[e2e.error]", msg);
         await log("error", false, { error: msg });
         await notify("error", "🧪 E2E Test Failed", msg, { steps });
-        return jsonResponse({ success: false, error: msg, steps }, 500);
+        return jsonResponse({ success: false, error: "E2E test failed", steps }, 500);
       }
     }
 
     return jsonResponse({ error: `Unknown action: ${action}` }, 404);
   } catch (e) {
     console.error("Backend API error:", e);
-    return jsonResponse({ error: e instanceof Error ? e.message : "Unknown error" }, 500);
+    return jsonResponse({ error: "Internal server error" }, 500);
   }
 });

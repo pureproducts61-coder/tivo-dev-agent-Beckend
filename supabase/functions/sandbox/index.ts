@@ -443,7 +443,7 @@ Complete components with TypeScript, accessibility, dark mode, responsive.`,
     return jsonResponse({ error: `Unknown sandbox action: ${action}` }, 404);
   } catch (e) {
     console.error("Sandbox error:", e);
-    return jsonResponse({ error: e instanceof Error ? e.message : "Unknown error" }, 500);
+    return jsonResponse({ error: "Internal server error" }, 500);
   } finally {
     releaseSlot();
   }

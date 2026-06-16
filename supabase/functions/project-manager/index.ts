@@ -109,7 +109,8 @@ serve(async (req) => {
     try {
       supabase = checkSupabaseConnection();
     } catch (connErr) {
-      return jsonResponse({ error: connErr instanceof Error ? connErr.message : "Connection Error", alert: "ADMIN_CONNECTION_ERROR" }, 503);
+      console.error("[connection_error]", connErr);
+      return jsonResponse({ error: "Database not available", alert: "ADMIN_CONNECTION_ERROR" }, 503);
     }
 
     // Helper: scope query to current tenant unless super admin
@@ -264,7 +265,7 @@ serve(async (req) => {
       const { data: owned, error: ownErr } = await scope(
         supabase.from("projects").select("id").eq("id", project_id)
       ).maybeSingle();
-      if (ownErr) return jsonResponse({ error: ownErr.message }, 500);
+      if (ownErr) { console.error("[db_error]", ownErr); return jsonResponse({ error: "Database operation failed" }, 500); }
       if (!owned) return jsonResponse({ error: "Project not found or access denied" }, 404);
 
 
@@ -371,6 +372,6 @@ serve(async (req) => {
     return jsonResponse({ error: `Unknown project action: ${action}` }, 404);
   } catch (e) {
     console.error("Project Manager error:", e);
-    return jsonResponse({ error: e instanceof Error ? e.message : "Unknown error" }, 500);
+    return jsonResponse({ error: "Internal server error" }, 500);
   }
 });
