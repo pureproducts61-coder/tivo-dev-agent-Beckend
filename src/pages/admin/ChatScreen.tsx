@@ -1,9 +1,10 @@
 import { useEffect, useRef, useState } from "react";
-import { Sparkles } from "lucide-react";
+import { Sparkles, Globe, RefreshCw, ShieldCheck, KeyRound } from "lucide-react";
 import { useSuperAdmin } from "@/contexts/SuperAdminContext";
 import { ChatMessage, ChatMsg, Artifact, validateArtifact } from "@/components/chat/ChatMessage";
 import { ChatInput, ActionIcons } from "@/components/chat/ChatInput";
 import { SecurityScanPanel } from "@/components/chat/SecurityScanPanel";
+import { VariablesPanel } from "@/components/admin/VariablesPanel";
 import { supabase } from "@/integrations/supabase/client";
 
 const BACKEND = import.meta.env.VITE_SUPABASE_URL;
@@ -54,6 +55,7 @@ export default function ChatScreen() {
   const [streaming, setStreaming] = useState(false);
   const [statusText, setStatusText] = useState<string | null>(null);
   const [scanOpen, setScanOpen] = useState(false);
+  const [varsOpen, setVarsOpen] = useState(false);
   const scrollRef = useRef<HTMLDivElement>(null);
   const abortRef = useRef<AbortController | null>(null);
 
@@ -335,6 +337,90 @@ export default function ChatScreen() {
       desc: "Scan & fix vulnerabilities",
       onClick: () => setScanOpen(true),
     },
+    {
+      id: "variables",
+      label: "AI Variables",
+      icon: ActionIcons.KeyRound,
+      desc: "Key/Value AI access",
+      onClick: () => setVarsOpen(true),
+    },
+    {
+      id: "rename",
+      label: "Rename Project",
+      icon: ActionIcons.Pencil,
+      desc: "Edit project name",
+      onClick: () =>
+        withProject("Renaming", async (id) => {
+          const name = window.prompt("নতুন project name:");
+          if (!name?.trim()) throw new Error("Cancelled");
+          const { error } = await supabase.from("projects").update({ name: name.trim() }).eq("id", id);
+          if (error) throw new Error(error.message);
+        }),
+    },
+    {
+      id: "analytics",
+      label: "Analytics",
+      icon: ActionIcons.BarChart3,
+      desc: "Build & deploy metrics",
+      onClick: () =>
+        withProject("Loading analytics", async (id) => {
+          const data = await backendCall("project-manager", `analytics?id=${id}`, null, "GET").catch(() => null);
+          pushSystem("📊 Analytics:\n```json\n" + JSON.stringify(data ?? { note: "no data" }, null, 2) + "\n```");
+        }),
+    },
+    {
+      id: "visitors",
+      label: "Visitors",
+      icon: ActionIcons.Users,
+      desc: "Live visitor stats",
+      onClick: () =>
+        withProject("Fetching visitors", async (id) => {
+          const data = await backendCall("project-manager", `visitors?id=${id}`, null, "GET").catch(() => null);
+          pushSystem("👥 Visitors:\n```json\n" + JSON.stringify(data ?? { note: "no data" }, null, 2) + "\n```");
+        }),
+    },
+    {
+      id: "performance",
+      label: "Performance",
+      icon: ActionIcons.Gauge,
+      desc: "Speed & uptime",
+      onClick: () =>
+        withProject("Profiling", async (id) => {
+          const data = await backendCall("project-manager", `performance?id=${id}`, null, "GET").catch(() => null);
+          pushSystem("⚡ Performance:\n```json\n" + JSON.stringify(data ?? { note: "no data" }, null, 2) + "\n```");
+        }),
+    },
+    {
+      id: "reopen",
+      label: "Reopen Project",
+      icon: ActionIcons.RotateCcw,
+      desc: "Restore archived project",
+      onClick: () =>
+        withProject("Reopening", async (id) => {
+          const { error } = await supabase.from("projects").update({ archived: false } as any).eq("id", id);
+          if (error) throw new Error(error.message);
+        }),
+    },
+    {
+      id: "delete",
+      label: "Delete Project",
+      icon: ActionIcons.Trash2,
+      desc: "Permanently remove",
+      tone: "danger" as const,
+      onClick: () =>
+        withProject("Deleting", async (id) => {
+          if (!confirm("সত্যিই delete করবে? এটা undo করা যাবে না।")) throw new Error("Cancelled");
+          const { error } = await supabase.from("projects").delete().eq("id", id);
+          if (error) throw new Error(error.message);
+        }),
+    },
+  ];
+
+  const quickActions = [
+    { id: "publish", label: "Publish", icon: Globe, onClick: actions.find((a) => a.id === "publish")!.onClick },
+    { id: "update", label: "Update", icon: RefreshCw, onClick: actions.find((a) => a.id === "update")!.onClick },
+    { id: "security", label: "Security", icon: ShieldCheck, onClick: () => setScanOpen(true) },
+    { id: "variables", label: "Variables", icon: KeyRound, onClick: () => setVarsOpen(true) },
   ];
 
   return (
@@ -401,9 +487,29 @@ export default function ChatScreen() {
           onFilesChange={setFiles}
           actions={actions}
         />
+
+        {/* Four primary quick actions below input */}
+        <div className="grid grid-cols-4 gap-2 px-3 sm:px-4 pb-3 -mt-1">
+          {quickActions.map((q) => {
+            const Icon = q.icon;
+            return (
+              <button
+                key={q.id}
+                onClick={q.onClick}
+                className="group flex flex-col items-center gap-1 px-2 py-2 rounded-xl border border-zinc-800/80 bg-zinc-900/40 hover:bg-zinc-900 hover:border-amber-700/50 transition active:scale-95"
+              >
+                <span className="w-7 h-7 rounded-lg bg-gradient-to-br from-amber-500/15 to-amber-800/10 border border-amber-800/30 flex items-center justify-center text-amber-400 group-hover:from-amber-500/30 group-hover:to-amber-700/20 transition">
+                  <Icon className="w-3.5 h-3.5" />
+                </span>
+                <span className="text-[10px] text-zinc-400 group-hover:text-amber-300">{q.label}</span>
+              </button>
+            );
+          })}
+        </div>
       </div>
 
       <SecurityScanPanel open={scanOpen} onClose={() => setScanOpen(false)} />
+      <VariablesPanel open={varsOpen} onClose={() => setVarsOpen(false)} />
     </div>
   );
 }

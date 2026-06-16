@@ -15,7 +15,7 @@ function Drawer({ open, onClose }: { open: boolean; onClose: () => void }) {
         onClick={(e) => e.stopPropagation()}
         className="absolute left-0 top-0 h-full w-72 bg-zinc-950 border-r border-zinc-800 p-4 space-y-2 overflow-y-auto"
       >
-        <div className="text-amber-500 font-bold text-lg mb-4">TIVO</div>
+        <div className="text-[11px] uppercase tracking-[0.3em] text-zinc-500 mb-4">Navigation</div>
         {[
           { to: "/super-admin/app/chats", label: "💬 Chats" },
           { to: "/super-admin/app/projects", label: "📦 Projects" },
@@ -181,8 +181,11 @@ export function AppShell({ children }: { children?: ReactNode }) {
             <button onClick={() => setDrawer(true)} className="p-2 rounded-lg hover:bg-zinc-900 md:hidden" aria-label="Menu">
               <span className="text-xl">☰</span>
             </button>
-            <Link to="/super-admin/app/chats" className="font-bold text-amber-500 tracking-wide">
-              TIVO
+            <Link
+              to="/super-admin/app/chats"
+              className="hidden md:block text-[11px] uppercase tracking-[0.3em] text-zinc-500 hover:text-amber-400 transition"
+            >
+              super admin
             </Link>
           </div>
           <DesktopTabs />
@@ -198,6 +201,7 @@ export function AppShell({ children }: { children?: ReactNode }) {
           </div>
         </div>
       </header>
+
 
       <main className="flex-1 overflow-y-auto">
         <div className="max-w-6xl mx-auto w-full h-full">{children ?? <Outlet />}</div>

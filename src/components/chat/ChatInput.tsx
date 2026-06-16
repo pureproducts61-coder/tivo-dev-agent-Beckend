@@ -1,7 +1,8 @@
 import { useEffect, useRef, useState } from "react";
 import {
   ArrowUp, Square, Paperclip, MoreHorizontal, X,
-  Upload, RefreshCw, History, Share2, Folder, Download, Eye, ShieldCheck, Wand2, Globe
+  Upload, RefreshCw, History, Share2, Folder, Download, Eye, ShieldCheck, Wand2, Globe,
+  Pencil, Trash2, BarChart3, Users, KeyRound, Sparkles, RotateCcw, Gauge,
 } from "lucide-react";
 
 export interface InputAction {
@@ -70,7 +71,12 @@ export function ChatInput({
         </div>
       )}
 
-      <div className="relative rounded-3xl bg-gradient-to-b from-zinc-900/95 to-zinc-900/80 border border-zinc-800 focus-within:border-amber-700/70 focus-within:ring-2 focus-within:ring-amber-700/20 transition-all shadow-xl shadow-black/40 backdrop-blur-md">
+      {/* Glowing thread/ring container */}
+      <div className="relative group">
+        {/* animated outer "thread" glow */}
+        <div className="pointer-events-none absolute -inset-[1px] rounded-[26px] bg-[conic-gradient(from_var(--tw-rotate),theme(colors.amber.500)_0deg,theme(colors.amber.700)_120deg,theme(colors.zinc.700)_180deg,theme(colors.amber.500)_360deg)] opacity-60 blur-[2px] group-focus-within:opacity-100 group-focus-within:blur-[3px] transition duration-500" />
+        <div className="relative rounded-3xl bg-gradient-to-b from-zinc-900/95 to-zinc-900/85 border border-zinc-800/80 focus-within:border-amber-700/70 transition-all shadow-xl shadow-black/40 backdrop-blur-md">
+
         <textarea
           ref={ta}
           value={value}
@@ -174,6 +180,7 @@ export function ChatInput({
             </button>
           )}
         </div>
+        </div>
       </div>
 
       <div className="text-[10px] text-zinc-600 text-center mt-1.5 hidden sm:block">
@@ -186,4 +193,5 @@ export function ChatInput({
 // Re-export icons for menu builders
 export const ActionIcons = {
   Upload, RefreshCw, History, Share2, Folder, Download, Eye, ShieldCheck, Wand2, Globe,
+  Pencil, Trash2, BarChart3, Users, KeyRound, Sparkles, RotateCcw, Gauge,
 };
