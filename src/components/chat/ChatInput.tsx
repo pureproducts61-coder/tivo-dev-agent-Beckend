@@ -1,7 +1,8 @@
 import { useEffect, useRef, useState } from "react";
 import {
   ArrowUp, Square, Paperclip, MoreHorizontal, X,
-  Upload, RefreshCw, History, Share2, Folder, Download, Eye, ShieldCheck, Wand2, Globe
+  Upload, RefreshCw, History, Share2, Folder, Download, Eye, ShieldCheck, Wand2, Globe,
+  Pencil, Trash2, BarChart3, Users, KeyRound, Sparkles, RotateCcw, Gauge,
 } from "lucide-react";
 
 export interface InputAction {
