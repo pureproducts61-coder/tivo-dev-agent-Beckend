@@ -180,6 +180,7 @@ export function ChatInput({
             </button>
           )}
         </div>
+        </div>
       </div>
 
       <div className="text-[10px] text-zinc-600 text-center mt-1.5 hidden sm:block">
@@ -192,4 +193,5 @@ export function ChatInput({
 // Re-export icons for menu builders
 export const ActionIcons = {
   Upload, RefreshCw, History, Share2, Folder, Download, Eye, ShieldCheck, Wand2, Globe,
+  Pencil, Trash2, BarChart3, Users, KeyRound, Sparkles, RotateCcw, Gauge,
 };
