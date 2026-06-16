@@ -487,9 +487,29 @@ export default function ChatScreen() {
           onFilesChange={setFiles}
           actions={actions}
         />
+
+        {/* Four primary quick actions below input */}
+        <div className="grid grid-cols-4 gap-2 px-3 sm:px-4 pb-3 -mt-1">
+          {quickActions.map((q) => {
+            const Icon = q.icon;
+            return (
+              <button
+                key={q.id}
+                onClick={q.onClick}
+                className="group flex flex-col items-center gap-1 px-2 py-2 rounded-xl border border-zinc-800/80 bg-zinc-900/40 hover:bg-zinc-900 hover:border-amber-700/50 transition active:scale-95"
+              >
+                <span className="w-7 h-7 rounded-lg bg-gradient-to-br from-amber-500/15 to-amber-800/10 border border-amber-800/30 flex items-center justify-center text-amber-400 group-hover:from-amber-500/30 group-hover:to-amber-700/20 transition">
+                  <Icon className="w-3.5 h-3.5" />
+                </span>
+                <span className="text-[10px] text-zinc-400 group-hover:text-amber-300">{q.label}</span>
+              </button>
+            );
+          })}
+        </div>
       </div>
 
       <SecurityScanPanel open={scanOpen} onClose={() => setScanOpen(false)} />
+      <VariablesPanel open={varsOpen} onClose={() => setVarsOpen(false)} />
     </div>
   );
 }
