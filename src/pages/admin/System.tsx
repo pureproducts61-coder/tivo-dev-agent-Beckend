@@ -1,4 +1,6 @@
 import { Link } from "react-router-dom";
+import { useState } from "react";
+import { VariablesPanel } from "@/components/admin/VariablesPanel";
 
 const TILES = [
   { to: "/super-admin/dashboard", icon: "📊", label: "Dashboard", desc: "Reports, proposed changes, audit" },
@@ -8,6 +10,7 @@ const TILES = [
 ];
 
 export default function System() {
+  const [varsOpen, setVarsOpen] = useState(false);
   return (
     <div className="p-4 max-w-2xl mx-auto space-y-4">
       <h1 className="text-lg font-bold">⚙️ System</h1>
@@ -23,6 +26,14 @@ export default function System() {
             <div className="text-[11px] text-zinc-500 mt-1">{t.desc}</div>
           </Link>
         ))}
+        <button
+          onClick={() => setVarsOpen(true)}
+          className="text-left rounded-xl border border-amber-900/40 bg-gradient-to-br from-amber-950/30 to-zinc-900/40 p-4 hover:border-amber-700 transition"
+        >
+          <div className="text-2xl mb-2">🗝️</div>
+          <div className="text-sm font-semibold">AI Variables</div>
+          <div className="text-[11px] text-zinc-500 mt-1">Dynamic key/value AI access</div>
+        </button>
       </div>
 
       <div className="rounded-xl border border-zinc-800 p-4 text-xs text-zinc-400 space-y-2">
@@ -34,6 +45,9 @@ export default function System() {
           <li>Super Admin lock: email + master secret required</li>
         </ul>
       </div>
+
+      <VariablesPanel open={varsOpen} onClose={() => setVarsOpen(false)} />
     </div>
   );
 }
+
