@@ -55,6 +55,7 @@ export default function ChatScreen() {
   const [streaming, setStreaming] = useState(false);
   const [statusText, setStatusText] = useState<string | null>(null);
   const [scanOpen, setScanOpen] = useState(false);
+  const [varsOpen, setVarsOpen] = useState(false);
   const scrollRef = useRef<HTMLDivElement>(null);
   const abortRef = useRef<AbortController | null>(null);
 
