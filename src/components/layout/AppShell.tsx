@@ -15,7 +15,7 @@ function Drawer({ open, onClose }: { open: boolean; onClose: () => void }) {
         onClick={(e) => e.stopPropagation()}
         className="absolute left-0 top-0 h-full w-72 bg-zinc-950 border-r border-zinc-800 p-4 space-y-2 overflow-y-auto"
       >
-        <div className="text-amber-500 font-bold text-lg mb-4">TIVO</div>
+        <div className="text-[11px] uppercase tracking-[0.3em] text-zinc-500 mb-4">Navigation</div>
         {[
           { to: "/super-admin/app/chats", label: "💬 Chats" },
           { to: "/super-admin/app/projects", label: "📦 Projects" },
