@@ -1,6 +1,7 @@
 import { useEffect, useState } from "react";
 import { Eye, EyeOff, Pencil, Trash2, Plus, X, Check, Copy, KeyRound, Search, Lock } from "lucide-react";
 import { supabase } from "@/integrations/supabase/client";
+import { logAudit } from "@/lib/audit";
 
 interface Variable {
   id: string;
@@ -58,6 +59,7 @@ export function VariablesPanel({ open, onClose }: Props) {
         setError(error.message);
         return false;
       }
+      logAudit("ai_variable.update", v.id, { key: v.key, is_secret: !!v.is_secret });
     } else {
       const { error } = await supabase
         .from("ai_variables")
@@ -66,6 +68,7 @@ export function VariablesPanel({ open, onClose }: Props) {
         setError(error.message);
         return false;
       }
+      logAudit("ai_variable.create", v.key, { is_secret: !!v.is_secret });
     }
     await load();
     return true;
@@ -73,9 +76,13 @@ export function VariablesPanel({ open, onClose }: Props) {
 
   async function remove(id: string) {
     if (!confirm("Delete this variable?")) return;
+    const target = list.find((x) => x.id === id);
     const { error } = await supabase.from("ai_variables").delete().eq("id", id);
     if (error) setError(error.message);
-    else load();
+    else {
+      logAudit("ai_variable.delete", id, { key: target?.key });
+      load();
+    }
   }
 
   const filtered = list.filter(
