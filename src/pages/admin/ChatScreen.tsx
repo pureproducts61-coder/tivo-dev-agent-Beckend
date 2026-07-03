@@ -471,6 +471,7 @@ export default function ChatScreen() {
         withProject("Reopening", async (id) => {
           const { error } = await supabase.from("projects").update({ archived: false } as any).eq("id", id);
           if (error) throw new Error(error.message);
+          logAudit("project.reopen", id);
         }),
     },
     {
@@ -484,6 +485,7 @@ export default function ChatScreen() {
           if (!confirm("সত্যিই delete করবে? এটা undo করা যাবে না।")) throw new Error("Cancelled");
           const { error } = await supabase.from("projects").delete().eq("id", id);
           if (error) throw new Error(error.message);
+          logAudit("project.delete", id);
         }),
     },
   ];
