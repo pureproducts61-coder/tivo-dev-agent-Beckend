@@ -199,12 +199,14 @@ export default function ChatScreen() {
     const assistantId = uid();
     setMessages((m) => [...m, { id: assistantId, role: "assistant", content: "", ts: Date.now() }]);
 
+    const systemPrompt = await buildSystemPrompt();
+
     try {
       const res = await fetch(`${BACKEND}/functions/v1/ai-engine/chat`, {
         method: "POST",
         headers: { "Content-Type": "application/json", "x-master-secret": session.masterSecret },
         body: JSON.stringify({
-          messages: [{ role: "system", content: SYSTEM_PROMPT }, ...chatHistory],
+          messages: [{ role: "system", content: systemPrompt }, ...chatHistory],
           stream: true,
         }),
         signal: ctrl.signal,
