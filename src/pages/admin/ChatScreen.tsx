@@ -426,6 +426,7 @@ export default function ChatScreen() {
           if (!name?.trim()) throw new Error("Cancelled");
           const { error } = await supabase.from("projects").update({ name: name.trim() }).eq("id", id);
           if (error) throw new Error(error.message);
+          logAudit("project.rename", id, { name: name.trim() });
         }),
     },
     {
