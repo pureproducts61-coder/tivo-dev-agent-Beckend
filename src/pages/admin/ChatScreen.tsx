@@ -314,6 +314,7 @@ export default function ChatScreen() {
       onClick: () =>
         withProject("Publishing", async (id) => {
           const data = await backendCall("project-manager", "publish", { project_id: id });
+          logAudit("project.publish", id, { public_url: data?.public_url });
           if (data?.public_url) {
             pushSystem(`🌐 Live: ${data.public_url}`, [
               { name: "Open live site", url: data.public_url, mime: "text/html" },
@@ -329,6 +330,7 @@ export default function ChatScreen() {
       onClick: () =>
         withProject("Rebuilding", async (id) => {
           await backendCall("project-manager", "update", { id, build_status: "queued" }, "POST");
+          logAudit("project.update", id, { build_status: "queued" });
         }),
     },
     {
