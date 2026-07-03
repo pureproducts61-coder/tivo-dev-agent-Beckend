@@ -1,6 +1,7 @@
 import { useEffect, useState } from "react";
 import { Eye, EyeOff, Pencil, Trash2, Plus, X, Check, Copy, KeyRound, Search, Lock } from "lucide-react";
 import { supabase } from "@/integrations/supabase/client";
+import { logAudit } from "@/lib/audit";
 
 interface Variable {
   id: string;
