@@ -1,69 +1,179 @@
 import { ReactNode, useState } from "react";
 import { Link, NavLink, Outlet, useNavigate } from "react-router-dom";
+import {
+  MessageSquare, FolderKanban, Users, Cog, Bot, Gauge, Wrench,
+  Bell, Settings as SettingsIcon, Menu, LogOut, Sparkles, PanelLeftClose, PanelLeft,
+} from "lucide-react";
 import { useSuperAdmin } from "@/contexts/SuperAdminContext";
 import { useAlerts } from "@/hooks/useAlerts";
 import { SettingsSheet } from "./SettingsSheet";
 
-function Drawer({ open, onClose }: { open: boolean; onClose: () => void }) {
-  const { logout } = useSuperAdmin();
+const NAV_PRIMARY = [
+  { to: "/super-admin/app/chats", icon: MessageSquare, label: "Chat" },
+  { to: "/super-admin/app/projects", icon: FolderKanban, label: "Projects" },
+  { to: "/super-admin/app/users", icon: Users, label: "Users" },
+  { to: "/super-admin/app/system", icon: Cog, label: "System" },
+];
+
+const NAV_SECONDARY = [
+  { to: "/super-admin/workspace", icon: Bot, label: "AI Workspace" },
+  { to: "/super-admin/dashboard", icon: Gauge, label: "Dashboard" },
+  { to: "/super-admin/debug", icon: Wrench, label: "Debug" },
+];
+
+function SidebarItem({ to, icon: Icon, label, collapsed }: any) {
+  return (
+    <NavLink
+      to={to}
+      className={({ isActive }) =>
+        `group flex items-center gap-3 px-2.5 py-2 rounded-lg text-sm transition ${
+          isActive
+            ? "bg-amber-500/10 text-amber-300 ring-1 ring-amber-500/20"
+            : "text-zinc-400 hover:text-zinc-100 hover:bg-zinc-900"
+        }`
+      }
+      title={collapsed ? label : undefined}
+    >
+      <Icon className="w-4 h-4 shrink-0" />
+      {!collapsed && <span className="truncate">{label}</span>}
+    </NavLink>
+  );
+}
+
+function DesktopSidebar({ collapsed, setCollapsed }: { collapsed: boolean; setCollapsed: (v: boolean) => void }) {
+  const { logout, session } = useSuperAdmin();
+  const nav = useNavigate();
+  return (
+    <aside
+      className={`hidden md:flex sticky top-0 h-screen flex-col bg-zinc-950 border-r border-zinc-900 transition-all duration-200 ${
+        collapsed ? "w-[68px]" : "w-64"
+      }`}
+    >
+      <div className="flex items-center gap-2 px-3 h-14 border-b border-zinc-900">
+        <div className="w-8 h-8 rounded-lg bg-gradient-to-br from-amber-400 to-amber-700 flex items-center justify-center shadow-md shadow-amber-900/30 shrink-0">
+          <Sparkles className="w-4 h-4 text-white" />
+        </div>
+        {!collapsed && (
+          <div className="min-w-0 flex-1">
+            <div className="text-sm font-semibold leading-tight">TIVO</div>
+            <div className="text-[10px] text-zinc-500 leading-tight">Dev Agent</div>
+          </div>
+        )}
+        <button
+          onClick={() => setCollapsed(!collapsed)}
+          className="w-7 h-7 rounded-md hover:bg-zinc-900 text-zinc-500 hover:text-zinc-200 flex items-center justify-center"
+          aria-label="Toggle sidebar"
+        >
+          {collapsed ? <PanelLeft className="w-4 h-4" /> : <PanelLeftClose className="w-4 h-4" />}
+        </button>
+      </div>
+
+      <div className="flex-1 overflow-y-auto p-2 space-y-4">
+        <div className="space-y-0.5">
+          {!collapsed && <div className="px-2 pt-1 pb-1 text-[10px] uppercase tracking-widest text-zinc-600">Workspace</div>}
+          {NAV_PRIMARY.map((i) => (
+            <SidebarItem key={i.to} {...i} collapsed={collapsed} />
+          ))}
+        </div>
+        <div className="space-y-0.5">
+          {!collapsed && <div className="px-2 pt-1 pb-1 text-[10px] uppercase tracking-widest text-zinc-600">Tools</div>}
+          {NAV_SECONDARY.map((i) => (
+            <SidebarItem key={i.to} {...i} collapsed={collapsed} />
+          ))}
+        </div>
+      </div>
+
+      <div className="border-t border-zinc-900 p-2">
+        {!collapsed && session?.email && (
+          <div className="px-2 py-1.5 text-[11px] text-zinc-500 truncate">{session.email}</div>
+        )}
+        <button
+          onClick={() => {
+            logout();
+            nav("/super-admin/login");
+          }}
+          className="w-full flex items-center gap-3 px-2.5 py-2 rounded-lg text-sm text-red-400 hover:bg-red-950/20"
+          title={collapsed ? "Logout" : undefined}
+        >
+          <LogOut className="w-4 h-4 shrink-0" />
+          {!collapsed && <span>Logout</span>}
+        </button>
+      </div>
+    </aside>
+  );
+}
+
+function MobileDrawer({ open, onClose }: { open: boolean; onClose: () => void }) {
+  const { logout, session } = useSuperAdmin();
   const nav = useNavigate();
   if (!open) return null;
   return (
-    <div className="fixed inset-0 z-50" onClick={onClose}>
-      <div className="absolute inset-0 bg-black/60" />
+    <div className="fixed inset-0 z-50 md:hidden" onClick={onClose}>
+      <div className="absolute inset-0 bg-black/70 backdrop-blur-sm" />
       <aside
         onClick={(e) => e.stopPropagation()}
-        className="absolute left-0 top-0 h-full w-72 bg-zinc-950 border-r border-zinc-800 p-4 space-y-2 overflow-y-auto"
+        className="absolute left-0 top-0 h-full w-72 bg-zinc-950 border-r border-zinc-900 flex flex-col animate-fade-in"
       >
-        <div className="text-[11px] uppercase tracking-[0.3em] text-zinc-500 mb-4">Navigation</div>
-        {[
-          { to: "/super-admin/app/chats", label: "💬 Chats" },
-          { to: "/super-admin/app/projects", label: "📦 Projects" },
-          { to: "/super-admin/app/users", label: "👥 Users" },
-          { to: "/super-admin/app/system", label: "⚙️ System" },
-          { to: "/super-admin/workspace", label: "🤖 AI Workspace" },
-          { to: "/super-admin/dashboard", label: "📊 Legacy Dashboard" },
-          { to: "/super-admin/debug", label: "🔧 Debug" },
-        ].map((i) => (
-          <NavLink
-            key={i.to}
-            to={i.to}
-            onClick={onClose}
-            className={({ isActive }) =>
-              `block px-3 py-2 rounded-lg text-sm transition ${
-                isActive ? "bg-amber-700 text-white" : "text-zinc-300 hover:bg-zinc-900"
-              }`
-            }
-          >
-            {i.label}
-          </NavLink>
-        ))}
-        <div className="pt-4 border-t border-zinc-800">
+        <div className="flex items-center gap-2 px-3 h-14 border-b border-zinc-900">
+          <div className="w-8 h-8 rounded-lg bg-gradient-to-br from-amber-400 to-amber-700 flex items-center justify-center">
+            <Sparkles className="w-4 h-4 text-white" />
+          </div>
+          <div className="min-w-0 flex-1">
+            <div className="text-sm font-semibold">TIVO</div>
+            <div className="text-[10px] text-zinc-500 truncate">{session?.email}</div>
+          </div>
+        </div>
+        <div className="flex-1 overflow-y-auto p-2 space-y-4">
+          <div>
+            <div className="px-2 pb-1 text-[10px] uppercase tracking-widest text-zinc-600">Workspace</div>
+            {NAV_PRIMARY.map((i) => (
+              <NavLink
+                key={i.to}
+                to={i.to}
+                onClick={onClose}
+                className={({ isActive }) =>
+                  `flex items-center gap-3 px-2.5 py-2 rounded-lg text-sm ${
+                    isActive ? "bg-amber-500/10 text-amber-300" : "text-zinc-300 hover:bg-zinc-900"
+                  }`
+                }
+              >
+                <i.icon className="w-4 h-4" />
+                {i.label}
+              </NavLink>
+            ))}
+          </div>
+          <div>
+            <div className="px-2 pb-1 text-[10px] uppercase tracking-widest text-zinc-600">Tools</div>
+            {NAV_SECONDARY.map((i) => (
+              <NavLink
+                key={i.to}
+                to={i.to}
+                onClick={onClose}
+                className={({ isActive }) =>
+                  `flex items-center gap-3 px-2.5 py-2 rounded-lg text-sm ${
+                    isActive ? "bg-amber-500/10 text-amber-300" : "text-zinc-300 hover:bg-zinc-900"
+                  }`
+                }
+              >
+                <i.icon className="w-4 h-4" />
+                {i.label}
+              </NavLink>
+            ))}
+          </div>
+        </div>
+        <div className="border-t border-zinc-900 p-2">
           <button
             onClick={() => {
               logout();
               nav("/super-admin/login");
             }}
-            className="w-full px-3 py-2 text-sm rounded-lg text-red-400 hover:bg-red-950/30"
+            className="w-full flex items-center gap-3 px-2.5 py-2 rounded-lg text-sm text-red-400 hover:bg-red-950/20"
           >
-            🚪 Logout
+            <LogOut className="w-4 h-4" /> Logout
           </button>
         </div>
       </aside>
     </div>
-  );
-}
-
-function BellButton({ onClick, count }: { onClick: () => void; count: number }) {
-  return (
-    <button onClick={onClick} className="relative p-2 rounded-lg hover:bg-zinc-900" aria-label="Alerts">
-      <span className="text-xl">🔔</span>
-      {count > 0 && (
-        <span className="absolute -top-0.5 -right-0.5 min-w-[18px] h-[18px] px-1 rounded-full bg-red-600 text-[10px] font-bold flex items-center justify-center">
-          {count > 9 ? "9+" : count}
-        </span>
-      )}
-    </button>
   );
 }
 
@@ -72,19 +182,21 @@ function AlertsPanel({ open, onClose }: { open: boolean; onClose: () => void }) 
   if (!open) return null;
   return (
     <div className="fixed inset-0 z-50" onClick={onClose}>
-      <div className="absolute inset-0 bg-black/60" />
+      <div className="absolute inset-0 bg-black/60 backdrop-blur-sm" />
       <aside
         onClick={(e) => e.stopPropagation()}
-        className="absolute right-0 top-0 h-full w-80 max-w-[90vw] bg-zinc-950 border-l border-zinc-800 flex flex-col"
+        className="absolute right-0 top-0 h-full w-80 max-w-[92vw] bg-zinc-950 border-l border-zinc-900 flex flex-col animate-fade-in"
       >
-        <div className="flex items-center justify-between p-4 border-b border-zinc-800">
-          <h2 className="font-bold">🔔 Alerts</h2>
-          <button onClick={markAllRead} className="text-xs text-amber-500 hover:underline">
+        <div className="flex items-center justify-between px-4 h-14 border-b border-zinc-900">
+          <h2 className="font-semibold text-sm flex items-center gap-2">
+            <Bell className="w-4 h-4 text-amber-400" /> Alerts
+          </h2>
+          <button onClick={markAllRead} className="text-[11px] text-amber-400 hover:underline">
             Mark all read
           </button>
         </div>
         <div className="flex-1 overflow-y-auto p-3 space-y-2">
-          {alerts.length === 0 && <p className="text-xs text-zinc-500 text-center py-8">No alerts yet</p>}
+          {alerts.length === 0 && <p className="text-xs text-zinc-500 text-center py-10">No alerts yet</p>}
           {alerts.map((a) => (
             <div
               key={a.id}
@@ -108,52 +220,20 @@ function AlertsPanel({ open, onClose }: { open: boolean; onClose: () => void }) 
 }
 
 function BottomTabs() {
-  const tabs = [
-    { to: "/super-admin/app/chats", icon: "💬", label: "Chats" },
-    { to: "/super-admin/app/projects", icon: "📦", label: "Projects" },
-    { to: "/super-admin/app/users", icon: "👥", label: "Users" },
-    { to: "/super-admin/app/system", icon: "⚙️", label: "System" },
-  ];
   return (
-    <nav className="sticky bottom-0 z-30 bg-zinc-950/95 backdrop-blur border-t border-zinc-800 grid grid-cols-4 md:hidden pb-[env(safe-area-inset-bottom)]">
-      {tabs.map((t) => (
+    <nav className="sticky bottom-0 z-30 bg-zinc-950/95 backdrop-blur border-t border-zinc-900 grid grid-cols-4 md:hidden pb-[env(safe-area-inset-bottom)]">
+      {NAV_PRIMARY.map((t) => (
         <NavLink
           key={t.to}
           to={t.to}
           className={({ isActive }) =>
-            `flex flex-col items-center py-2.5 text-[11px] transition ${
-              isActive ? "text-amber-500" : "text-zinc-500"
+            `flex flex-col items-center py-2 text-[10px] transition ${
+              isActive ? "text-amber-400" : "text-zinc-500"
             }`
           }
         >
-          <span className="text-lg">{t.icon}</span>
+          <t.icon className="w-4 h-4 mb-0.5" />
           <span>{t.label}</span>
-        </NavLink>
-      ))}
-    </nav>
-  );
-}
-
-function DesktopTabs() {
-  const tabs = [
-    { to: "/super-admin/app/chats", label: "💬 Chats" },
-    { to: "/super-admin/app/projects", label: "📦 Projects" },
-    { to: "/super-admin/app/users", label: "👥 Users" },
-    { to: "/super-admin/app/system", label: "⚙️ System" },
-  ];
-  return (
-    <nav className="hidden md:flex items-center gap-1">
-      {tabs.map((t) => (
-        <NavLink
-          key={t.to}
-          to={t.to}
-          className={({ isActive }) =>
-            `px-3 py-1.5 text-xs rounded-lg transition ${
-              isActive ? "bg-amber-700 text-white" : "text-zinc-400 hover:bg-zinc-900"
-            }`
-          }
-        >
-          {t.label}
         </NavLink>
       ))}
     </nav>
@@ -163,6 +243,7 @@ function DesktopTabs() {
 export function AppShell({ children }: { children?: ReactNode }) {
   const { session } = useSuperAdmin();
   const nav = useNavigate();
+  const [collapsed, setCollapsed] = useState(false);
   const [drawer, setDrawer] = useState(false);
   const [alertsOpen, setAlertsOpen] = useState(false);
   const [settingsOpen, setSettingsOpen] = useState(false);
@@ -174,42 +255,69 @@ export function AppShell({ children }: { children?: ReactNode }) {
   }
 
   return (
-    <div className="min-h-screen bg-zinc-950 text-zinc-100 flex flex-col">
-      <header className="sticky top-0 z-30 bg-zinc-950/95 backdrop-blur border-b border-zinc-800">
-        <div className="max-w-6xl mx-auto flex items-center justify-between px-3 py-2 gap-2">
-          <div className="flex items-center gap-2">
-            <button onClick={() => setDrawer(true)} className="p-2 rounded-lg hover:bg-zinc-900 md:hidden" aria-label="Menu">
-              <span className="text-xl">☰</span>
-            </button>
-            <Link
-              to="/super-admin/app/chats"
-              className="hidden md:block text-[11px] uppercase tracking-[0.3em] text-zinc-500 hover:text-amber-400 transition"
-            >
-              super admin
-            </Link>
+    <div className="min-h-screen bg-zinc-950 text-zinc-100 flex">
+      <DesktopSidebar collapsed={collapsed} setCollapsed={setCollapsed} />
+
+      <div className="flex-1 flex flex-col min-w-0">
+        <header className="sticky top-0 z-30 bg-zinc-950/90 backdrop-blur-xl border-b border-zinc-900">
+          <div className="flex items-center justify-between px-3 sm:px-5 h-14 gap-2">
+            <div className="flex items-center gap-2 min-w-0">
+              <button
+                onClick={() => setDrawer(true)}
+                className="p-2 rounded-lg hover:bg-zinc-900 md:hidden"
+                aria-label="Menu"
+              >
+                <Menu className="w-5 h-5" />
+              </button>
+              <Link to="/super-admin/app/chats" className="flex items-center gap-2 min-w-0 md:hidden">
+                <div className="w-7 h-7 rounded-lg bg-gradient-to-br from-amber-400 to-amber-700 flex items-center justify-center">
+                  <Sparkles className="w-3.5 h-3.5 text-white" />
+                </div>
+                <span className="text-sm font-semibold truncate">TIVO</span>
+              </Link>
+              <div className="hidden md:flex items-center gap-2">
+                <span className="text-xs text-zinc-500">Dev Agent</span>
+                <span className="w-1 h-1 rounded-full bg-zinc-700" />
+                <span className="text-xs text-emerald-400 flex items-center gap-1.5">
+                  <span className="relative flex h-1.5 w-1.5">
+                    <span className="animate-ping absolute inline-flex h-full w-full rounded-full bg-emerald-400 opacity-75" />
+                    <span className="relative inline-flex rounded-full h-1.5 w-1.5 bg-emerald-400" />
+                  </span>
+                  online
+                </span>
+              </div>
+            </div>
+
+            <div className="flex items-center gap-1">
+              <button
+                onClick={() => setAlertsOpen(true)}
+                className="relative p-2 rounded-lg hover:bg-zinc-900"
+                aria-label="Alerts"
+              >
+                <Bell className="w-5 h-5" />
+                {unreadCount > 0 && (
+                  <span className="absolute top-1 right-1 min-w-[16px] h-4 px-1 rounded-full bg-red-600 text-[9px] font-bold flex items-center justify-center">
+                    {unreadCount > 9 ? "9+" : unreadCount}
+                  </span>
+                )}
+              </button>
+              <button
+                onClick={() => setSettingsOpen(true)}
+                className="p-2 rounded-lg hover:bg-zinc-900"
+                aria-label="Settings"
+              >
+                <SettingsIcon className="w-5 h-5" />
+              </button>
+            </div>
           </div>
-          <DesktopTabs />
-          <div className="flex items-center gap-1">
-            <BellButton onClick={() => setAlertsOpen(true)} count={unreadCount} />
-            <button
-              onClick={() => setSettingsOpen(true)}
-              className="p-2 rounded-lg hover:bg-zinc-900"
-              aria-label="Settings"
-            >
-              <span className="text-xl">⚙️</span>
-            </button>
-          </div>
-        </div>
-      </header>
+        </header>
 
+        <main className="flex-1 overflow-y-auto">{children ?? <Outlet />}</main>
 
-      <main className="flex-1 overflow-y-auto">
-        <div className="max-w-6xl mx-auto w-full h-full">{children ?? <Outlet />}</div>
-      </main>
+        <BottomTabs />
+      </div>
 
-      <BottomTabs />
-
-      <Drawer open={drawer} onClose={() => setDrawer(false)} />
+      <MobileDrawer open={drawer} onClose={() => setDrawer(false)} />
       <AlertsPanel open={alertsOpen} onClose={() => setAlertsOpen(false)} />
       <SettingsSheet open={settingsOpen} onClose={() => setSettingsOpen(false)} />
     </div>
