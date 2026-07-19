@@ -1059,6 +1059,7 @@ serve(async (req) => {
 
     // === credentials/test — Test Connection for each provider ===
     if (action === "credentials/test" && req.method === "POST") {
+      if (!isSA) return jsonResponse({ error: "Super Admin only" }, 403);
       const { provider } = body as { provider?: string };
       if (!provider) return jsonResponse({ error: "provider required" }, 400);
       const started = Date.now();
