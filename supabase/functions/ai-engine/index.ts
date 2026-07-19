@@ -787,7 +787,15 @@ Generate 15-40 files. Complete code, no TODOs. TypeScript strict.`,
           const sbResult = requireSupabase();
           if (!("error" in sbResult)) {
             const supabase = sbResult.client;
-            const fileName = `${body.file_name || `image_${Date.now()}`}.png`;
+            // Ownership check — tenants may only write into projects they own.
+            // Super admin bypasses tenant filter.
+            let ownQ = supabase.from("projects").select("id").eq("id", body.project_id);
+            if (tenantId !== "super_admin") ownQ = ownQ.eq("tenant_id", tenantId);
+            const { data: ownCheck } = await ownQ.maybeSingle();
+            if (!ownCheck) return jsonResponse({ error: "Project not found or access denied" }, 403);
+
+            const safeName = sanitizeProjectName(String(body.file_name || `image_${Date.now()}`));
+            const fileName = `${safeName}.png`;
             const base64Data = imageData.replace(/^data:image\/\w+;base64,/, "");
             const binaryData = Uint8Array.from(atob(base64Data), c => c.charCodeAt(0));
             await supabase.storage.from("project-files").upload(

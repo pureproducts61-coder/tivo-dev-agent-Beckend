@@ -147,7 +147,7 @@ const CAPABILITY_MAP = {
     description: "কোথায় কোন ক্রেডেনশিয়াল সেট করতে হবে",
     vercel_env_vars: {
       NEXT_PUBLIC_BACKEND_URL: "Supabase URL (e.g., https://xxxxx.supabase.co)",
-      NEXT_PUBLIC_MASTER_SECRET: "MASTER_SECRET value — backend access key",
+      MASTER_SECRET: "Store server-side only (e.g., encrypted env var on your host). NEVER expose via NEXT_PUBLIC_*, VITE_*, or any client-bundled variable — proxy backend calls through a server route that injects the x-master-secret header.",
       NEXT_PUBLIC_HF_SPACE_URL: "HF Space URL (e.g., https://username-space.hf.space) — APK/EXE build-এর জন্য",
       NEXT_PUBLIC_SUPABASE_URL: "Same as NEXT_PUBLIC_BACKEND_URL",
       NEXT_PUBLIC_SUPABASE_ANON_KEY: "Supabase Anon/Publishable key",
@@ -340,8 +340,16 @@ serve(async (req) => {
       });
     }
 
-    // === Capabilities (no auth) ===
-    if (action === "capabilities") return jsonResponse(CAPABILITY_MAP);
+    // === Capabilities (no auth) — public response redacts credential_config to avoid
+    //     leaking secret naming conventions / client-bundled var hints. Authenticated
+    //     callers (Super Admin) get the full map.
+    if (action === "capabilities") {
+      const sec = req.headers.get("x-master-secret");
+      const t = resolveTenant(sec);
+      if (t && t.tenantId === "super_admin") return jsonResponse(CAPABILITY_MAP);
+      const { credential_config: _cc, ...publicMap } = CAPABILITY_MAP as any;
+      return jsonResponse(publicMap);
+    }
 
     // === Frontend AI Guide (no auth) ===
     if (action === "frontend-ai-guide") {
@@ -355,13 +363,13 @@ serve(async (req) => {
           must_call_first: ["GET /backend-api/health", "GET /backend-api/capabilities (memory-তে save করো)", "GET /backend-api/tenant-info"],
 
           setup: {
-            step_1: "Vercel Environment Variables সেট করো: NEXT_PUBLIC_BACKEND_URL, NEXT_PUBLIC_MASTER_SECRET, NEXT_PUBLIC_HF_SPACE_URL",
-            step_2: "প্রতিটি API কলে headers-এ x-master-secret যোগ করো",
+            step_1: "Store BACKEND_URL and HF_SPACE_URL as public build vars. Keep the master-secret SERVER-SIDE ONLY — never expose via NEXT_PUBLIC_* or any client-bundled variable.",
+            step_2: "Route every backend call through a server-side proxy (Next.js Route Handler, Edge Function, or serverless action) that injects the x-master-secret header. The browser must never see the secret.",
             step_3: "প্রথমে /backend-api/health কল করো সব ঠিক আছে কিনা দেখতে",
             step_4: "/backend-api/capabilities কল করো সব ক্ষমতা জানতে",
           },
 
-          credential_guide: CAPABILITY_MAP.credential_config,
+          credential_guide: "Credential naming details are only exposed to authenticated Super Admin callers. Sign in with the Super Admin master-secret and call /backend-api/capabilities to receive the full credential map.",
 
           how_ai_should_work: {
             principle: "AI স্বাধীনভাবে কাজ করবে — কোনো লিমিট নেই",
@@ -377,7 +385,7 @@ serve(async (req) => {
 
           api_call_pattern: {
             base_url: "NEXT_PUBLIC_BACKEND_URL/functions/v1/{function_name}/{action}",
-            headers: { "Content-Type": "application/json", "x-master-secret": "NEXT_PUBLIC_MASTER_SECRET" },
+            headers: { "Content-Type": "application/json", "x-master-secret": "<injected server-side; never expose to browser>" },
           },
 
           what_ai_must_learn: [
@@ -641,9 +649,11 @@ serve(async (req) => {
       const checks: any = {};
       if (supabase) {
         const { error: dbErr } = await supabase.from("projects").select("id").limit(1);
-        checks.database = dbErr ? { status: "error", message: dbErr.message } : { status: "ok" };
         const { error: stErr } = await supabase.storage.from("project-files").list("", { limit: 1 });
-        checks.storage = stErr ? { status: "error", message: stErr.message } : { status: "ok" };
+        if (dbErr) console.error("[check-connection] db error", dbErr);
+        if (stErr) console.error("[check-connection] storage error", stErr);
+        checks.database = dbErr ? { status: "error" } : { status: "ok" };
+        checks.storage = stErr ? { status: "error" } : { status: "ok" };
       } else {
         checks.database = { status: "not_configured" };
         checks.storage = { status: "not_configured" };
@@ -1057,6 +1067,7 @@ serve(async (req) => {
 
     // === credentials/test — Test Connection for each provider ===
     if (action === "credentials/test" && req.method === "POST") {
+      if (!isSA) return jsonResponse({ error: "Super Admin only" }, 403);
       const { provider } = body as { provider?: string };
       if (!provider) return jsonResponse({ error: "provider required" }, 400);
       const started = Date.now();
