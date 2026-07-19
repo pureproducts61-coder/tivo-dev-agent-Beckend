@@ -340,8 +340,15 @@ serve(async (req) => {
       });
     }
 
-    // === Capabilities (no auth) ===
-    if (action === "capabilities") return jsonResponse(CAPABILITY_MAP);
+    // === Capabilities (no auth) — public response redacts credential_config to avoid
+    //     leaking secret naming conventions / client-bundled var hints. Authenticated
+    //     callers (Super Admin) get the full map.
+    if (action === "capabilities") {
+      const isAuthed = !!resolveTenant(providedSecret);
+      if (isAuthed && T === "super_admin") return jsonResponse(CAPABILITY_MAP);
+      const { credential_config: _cc, ...publicMap } = CAPABILITY_MAP as any;
+      return jsonResponse(publicMap);
+    }
 
     // === Frontend AI Guide (no auth) ===
     if (action === "frontend-ai-guide") {
