@@ -147,7 +147,7 @@ const CAPABILITY_MAP = {
     description: "কোথায় কোন ক্রেডেনশিয়াল সেট করতে হবে",
     vercel_env_vars: {
       NEXT_PUBLIC_BACKEND_URL: "Supabase URL (e.g., https://xxxxx.supabase.co)",
-      NEXT_PUBLIC_MASTER_SECRET: "MASTER_SECRET value — backend access key",
+      MASTER_SECRET: "Store server-side only (e.g., encrypted env var on your host). NEVER expose via NEXT_PUBLIC_*, VITE_*, or any client-bundled variable — proxy backend calls through a server route that injects the x-master-secret header.",
       NEXT_PUBLIC_HF_SPACE_URL: "HF Space URL (e.g., https://username-space.hf.space) — APK/EXE build-এর জন্য",
       NEXT_PUBLIC_SUPABASE_URL: "Same as NEXT_PUBLIC_BACKEND_URL",
       NEXT_PUBLIC_SUPABASE_ANON_KEY: "Supabase Anon/Publishable key",
