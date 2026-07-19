@@ -344,8 +344,9 @@ serve(async (req) => {
     //     leaking secret naming conventions / client-bundled var hints. Authenticated
     //     callers (Super Admin) get the full map.
     if (action === "capabilities") {
-      const isAuthed = !!resolveTenant(providedSecret);
-      if (isAuthed && T === "super_admin") return jsonResponse(CAPABILITY_MAP);
+      const sec = req.headers.get("x-master-secret");
+      const t = resolveTenant(sec);
+      if (t && t.tenantId === "super_admin") return jsonResponse(CAPABILITY_MAP);
       const { credential_config: _cc, ...publicMap } = CAPABILITY_MAP as any;
       return jsonResponse(publicMap);
     }
