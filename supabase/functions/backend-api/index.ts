@@ -363,13 +363,13 @@ serve(async (req) => {
           must_call_first: ["GET /backend-api/health", "GET /backend-api/capabilities (memory-তে save করো)", "GET /backend-api/tenant-info"],
 
           setup: {
-            step_1: "Vercel Environment Variables সেট করো: NEXT_PUBLIC_BACKEND_URL, NEXT_PUBLIC_MASTER_SECRET, NEXT_PUBLIC_HF_SPACE_URL",
-            step_2: "প্রতিটি API কলে headers-এ x-master-secret যোগ করো",
+            step_1: "Store BACKEND_URL and HF_SPACE_URL as public build vars. Keep the master-secret SERVER-SIDE ONLY — never expose via NEXT_PUBLIC_* or any client-bundled variable.",
+            step_2: "Route every backend call through a server-side proxy (Next.js Route Handler, Edge Function, or serverless action) that injects the x-master-secret header. The browser must never see the secret.",
             step_3: "প্রথমে /backend-api/health কল করো সব ঠিক আছে কিনা দেখতে",
             step_4: "/backend-api/capabilities কল করো সব ক্ষমতা জানতে",
           },
 
-          credential_guide: CAPABILITY_MAP.credential_config,
+          credential_guide: "Credential naming details are only exposed to authenticated Super Admin callers. Sign in with the Super Admin master-secret and call /backend-api/capabilities to receive the full credential map.",
 
           how_ai_should_work: {
             principle: "AI স্বাধীনভাবে কাজ করবে — কোনো লিমিট নেই",
