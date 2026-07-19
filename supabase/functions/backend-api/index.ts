@@ -385,7 +385,7 @@ serve(async (req) => {
 
           api_call_pattern: {
             base_url: "NEXT_PUBLIC_BACKEND_URL/functions/v1/{function_name}/{action}",
-            headers: { "Content-Type": "application/json", "x-master-secret": "NEXT_PUBLIC_MASTER_SECRET" },
+            headers: { "Content-Type": "application/json", "x-master-secret": "<injected server-side; never expose to browser>" },
           },
 
           what_ai_must_learn: [
