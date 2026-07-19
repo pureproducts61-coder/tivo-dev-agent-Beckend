@@ -641,7 +641,9 @@ serve(async (req) => {
       const checks: any = {};
       if (supabase) {
         const { error: dbErr } = await supabase.from("projects").select("id").limit(1);
-        checks.database = dbErr ? { status: "error", message: dbErr.message } : { status: "ok" };
+        if (dbErr) console.error("[check-connection] db error", dbErr);
+        if (stErr) console.error("[check-connection] storage error", stErr);
+        checks.database = dbErr ? { status: "error" } : { status: "ok" };
         const { error: stErr } = await supabase.storage.from("project-files").list("", { limit: 1 });
         checks.storage = stErr ? { status: "error", message: stErr.message } : { status: "ok" };
       } else {
