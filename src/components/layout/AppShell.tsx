@@ -1,15 +1,17 @@
 import { ReactNode, useState } from "react";
-import { Link, NavLink, Outlet, useNavigate } from "react-router-dom";
+import { NavLink, Outlet, useNavigate } from "react-router-dom";
 import {
-  MessageSquare, FolderKanban, Users, Cog, Bot, Gauge, Wrench,
-  Bell, Settings as SettingsIcon, Menu, LogOut, Sparkles, PanelLeftClose, PanelLeft,
+  MessageSquare, FolderKanban, Users, Cog, Bot, Gauge, Wrench, CheckSquare,
+  Bell, Settings as SettingsIcon, Menu, LogOut, PanelLeftClose, PanelLeft,
 } from "lucide-react";
 import { useSuperAdmin } from "@/contexts/SuperAdminContext";
 import { useAlerts } from "@/hooks/useAlerts";
 import { SettingsSheet } from "./SettingsSheet";
+import { Petals } from "./Petals";
 
 const NAV_PRIMARY = [
   { to: "/super-admin/app/chats", icon: MessageSquare, label: "Chat" },
+  { to: "/super-admin/app/approvals", icon: CheckSquare, label: "Approvals" },
   { to: "/super-admin/app/projects", icon: FolderKanban, label: "Projects" },
   { to: "/super-admin/app/users", icon: Users, label: "Users" },
   { to: "/super-admin/app/system", icon: Cog, label: "System" },
@@ -49,19 +51,10 @@ function DesktopSidebar({ collapsed, setCollapsed }: { collapsed: boolean; setCo
         collapsed ? "w-[68px]" : "w-64"
       }`}
     >
-      <div className="flex items-center gap-2 px-3 h-14 border-b border-zinc-900">
-        <div className="w-8 h-8 rounded-lg bg-gradient-to-br from-amber-400 to-amber-700 flex items-center justify-center shadow-md shadow-amber-900/30 shrink-0">
-          <Sparkles className="w-4 h-4 text-white" />
-        </div>
-        {!collapsed && (
-          <div className="min-w-0 flex-1">
-            <div className="text-sm font-semibold leading-tight">TIVO</div>
-            <div className="text-[10px] text-zinc-500 leading-tight">Dev Agent</div>
-          </div>
-        )}
+      <div className="flex items-center justify-end px-2 h-14 border-b border-zinc-900">
         <button
           onClick={() => setCollapsed(!collapsed)}
-          className="w-7 h-7 rounded-md hover:bg-zinc-900 text-zinc-500 hover:text-zinc-200 flex items-center justify-center"
+          className="w-8 h-8 rounded-md hover:bg-zinc-900 text-zinc-400 hover:text-amber-400 flex items-center justify-center"
           aria-label="Toggle sidebar"
         >
           {collapsed ? <PanelLeft className="w-4 h-4" /> : <PanelLeftClose className="w-4 h-4" />}
@@ -114,12 +107,9 @@ function MobileDrawer({ open, onClose }: { open: boolean; onClose: () => void })
         onClick={(e) => e.stopPropagation()}
         className="absolute left-0 top-0 h-full w-72 bg-zinc-950 border-r border-zinc-900 flex flex-col animate-fade-in"
       >
-        <div className="flex items-center gap-2 px-3 h-14 border-b border-zinc-900">
-          <div className="w-8 h-8 rounded-lg bg-gradient-to-br from-amber-400 to-amber-700 flex items-center justify-center">
-            <Sparkles className="w-4 h-4 text-white" />
-          </div>
+        <div className="flex items-center px-3 h-14 border-b border-zinc-900">
           <div className="min-w-0 flex-1">
-            <div className="text-sm font-semibold">TIVO</div>
+            <div className="tivo-wordmark text-sm">TIVO</div>
             <div className="text-[10px] text-zinc-500 truncate">{session?.email}</div>
           </div>
         </div>
@@ -219,27 +209,6 @@ function AlertsPanel({ open, onClose }: { open: boolean; onClose: () => void }) 
   );
 }
 
-function BottomTabs() {
-  return (
-    <nav className="sticky bottom-0 z-30 bg-zinc-950/95 backdrop-blur border-t border-zinc-900 grid grid-cols-4 md:hidden pb-[env(safe-area-inset-bottom)]">
-      {NAV_PRIMARY.map((t) => (
-        <NavLink
-          key={t.to}
-          to={t.to}
-          className={({ isActive }) =>
-            `flex flex-col items-center py-2 text-[10px] transition ${
-              isActive ? "text-amber-400" : "text-zinc-500"
-            }`
-          }
-        >
-          <t.icon className="w-4 h-4 mb-0.5" />
-          <span>{t.label}</span>
-        </NavLink>
-      ))}
-    </nav>
-  );
-}
-
 export function AppShell({ children }: { children?: ReactNode }) {
   const { session } = useSuperAdmin();
   const nav = useNavigate();
@@ -259,9 +228,10 @@ export function AppShell({ children }: { children?: ReactNode }) {
       <DesktopSidebar collapsed={collapsed} setCollapsed={setCollapsed} />
 
       <div className="flex-1 flex flex-col min-w-0">
-        <header className="sticky top-0 z-30 bg-zinc-950/90 backdrop-blur-xl border-b border-zinc-900">
-          <div className="flex items-center justify-between px-3 sm:px-5 h-14 gap-2">
-            <div className="flex items-center gap-2 min-w-0">
+        <header className="sticky top-0 z-30 bg-zinc-950/90 backdrop-blur-xl border-b border-zinc-900 relative overflow-hidden">
+          <Petals count={12} />
+          <div className="flex items-center justify-between px-3 sm:px-5 h-14 gap-2 relative">
+            <div className="flex items-center gap-1 min-w-0 flex-1">
               <button
                 onClick={() => setDrawer(true)}
                 className="p-2 rounded-lg hover:bg-zinc-900 md:hidden"
@@ -269,26 +239,14 @@ export function AppShell({ children }: { children?: ReactNode }) {
               >
                 <Menu className="w-5 h-5" />
               </button>
-              <Link to="/super-admin/app/chats" className="flex items-center gap-2 min-w-0 md:hidden">
-                <div className="w-7 h-7 rounded-lg bg-gradient-to-br from-amber-400 to-amber-700 flex items-center justify-center">
-                  <Sparkles className="w-3.5 h-3.5 text-white" />
-                </div>
-                <span className="text-sm font-semibold truncate">TIVO</span>
-              </Link>
-              <div className="hidden md:flex items-center gap-2">
-                <span className="text-xs text-zinc-500">Dev Agent</span>
-                <span className="w-1 h-1 rounded-full bg-zinc-700" />
-                <span className="text-xs text-emerald-400 flex items-center gap-1.5">
-                  <span className="relative flex h-1.5 w-1.5">
-                    <span className="animate-ping absolute inline-flex h-full w-full rounded-full bg-emerald-400 opacity-75" />
-                    <span className="relative inline-flex rounded-full h-1.5 w-1.5 bg-emerald-400" />
-                  </span>
-                  online
-                </span>
-              </div>
             </div>
 
-            <div className="flex items-center gap-1">
+            {/* Centered golden animated wordmark */}
+            <h1 className="tivo-wordmark absolute left-1/2 -translate-x-1/2 text-[13px] sm:text-base whitespace-nowrap pointer-events-none select-none">
+              TIVO DEV AGENT
+            </h1>
+
+            <div className="flex items-center gap-1 flex-1 justify-end">
               <button
                 onClick={() => setAlertsOpen(true)}
                 className="relative p-2 rounded-lg hover:bg-zinc-900"
@@ -312,9 +270,7 @@ export function AppShell({ children }: { children?: ReactNode }) {
           </div>
         </header>
 
-        <main className="flex-1 overflow-y-auto">{children ?? <Outlet />}</main>
-
-        <BottomTabs />
+        <main className="flex-1 overflow-hidden flex flex-col">{children ?? <Outlet />}</main>
       </div>
 
       <MobileDrawer open={drawer} onClose={() => setDrawer(false)} />
