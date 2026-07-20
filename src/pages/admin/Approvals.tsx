@@ -173,10 +173,10 @@ export default function Approvals() {
 
                 {isOpen && (
                   <div className="px-3 sm:px-4 pb-3 pt-1 space-y-3 border-t border-zinc-800/60 animate-fade-in">
-                    {p.reason && (
+                    {p.change_type && (
                       <div className="text-xs">
-                        <div className="text-zinc-500 mb-1">Reason / notes</div>
-                        <div className="text-zinc-300 whitespace-pre-wrap">{p.reason}</div>
+                        <div className="text-zinc-500 mb-1">Change type</div>
+                        <div className="text-zinc-300 whitespace-pre-wrap">{p.change_type}</div>
                       </div>
                     )}
                     {p.payload && (
