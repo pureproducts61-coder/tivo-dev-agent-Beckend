@@ -29,6 +29,7 @@ const App = () => (
         <Route path="/super-admin/app" element={<AppShell />}>
           <Route index element={<Navigate to="chats" replace />} />
           <Route path="chats" element={<ChatScreen />} />
+          <Route path="approvals" element={<Approvals />} />
           <Route path="conversations" element={<Chats />} />
           <Route path="projects" element={<Projects />} />
           <Route path="users" element={<Users />} />
