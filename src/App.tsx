@@ -13,6 +13,7 @@ import Chats from "./pages/admin/Chats";
 import Projects from "./pages/admin/Projects";
 import Users from "./pages/admin/Users";
 import System from "./pages/admin/System";
+import Approvals from "./pages/admin/Approvals";
 
 const App = () => (
   <SuperAdminProvider>
@@ -28,6 +29,7 @@ const App = () => (
         <Route path="/super-admin/app" element={<AppShell />}>
           <Route index element={<Navigate to="chats" replace />} />
           <Route path="chats" element={<ChatScreen />} />
+          <Route path="approvals" element={<Approvals />} />
           <Route path="conversations" element={<Chats />} />
           <Route path="projects" element={<Projects />} />
           <Route path="users" element={<Users />} />

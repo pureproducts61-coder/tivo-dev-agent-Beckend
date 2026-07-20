@@ -1,5 +1,4 @@
 import { useEffect, useRef, useState } from "react";
-import { Sparkles, Globe, RefreshCw, ShieldCheck, KeyRound } from "lucide-react";
 import { useSuperAdmin } from "@/contexts/SuperAdminContext";
 import { ChatMessage, ChatMsg, Artifact, validateArtifact } from "@/components/chat/ChatMessage";
 import { ChatInput, ActionIcons } from "@/components/chat/ChatInput";
@@ -7,6 +6,7 @@ import { SecurityScanPanel } from "@/components/chat/SecurityScanPanel";
 import { VariablesPanel } from "@/components/admin/VariablesPanel";
 import { supabase } from "@/integrations/supabase/client";
 import { logAudit } from "@/lib/audit";
+
 
 const BACKEND = import.meta.env.VITE_SUPABASE_URL;
 
@@ -506,41 +506,37 @@ export default function ChatScreen() {
     },
   ];
 
-  const quickActions = [
-    { id: "publish", label: "Publish", icon: Globe, onClick: actions.find((a) => a.id === "publish")!.onClick },
-    { id: "update", label: "Update", icon: RefreshCw, onClick: actions.find((a) => a.id === "update")!.onClick },
-    { id: "security", label: "Security", icon: ShieldCheck, onClick: () => setScanOpen(true) },
-    { id: "variables", label: "Variables", icon: KeyRound, onClick: () => setVarsOpen(true) },
-  ];
+  // Wire feedback + assistant metadata
+  function handleFeedback(id: string, value: "up" | "down") {
+    setMessages((m) => m.map((x) => (x.id === id ? { ...x, feedback: value } : x)));
+    logAudit("chat.feedback", id, { value });
+  }
+
+  // Attach duration when streaming ends
+  useEffect(() => {
+    if (streaming) return;
+    setMessages((m) => {
+      const last = m[m.length - 1];
+      if (!last || last.role !== "assistant" || last.durationMs != null || !last.content) return m;
+      const prev = m[m.length - 2];
+      const start = prev?.ts ?? last.ts;
+      const durationMs = Date.now() - start;
+      // rough token→credit estimate: 1 credit ≈ 4k chars
+      const creditsUsed = Math.max(0.001, last.content.length / 4000);
+      const out = [...m];
+      out[out.length - 1] = { ...last, durationMs, creditsUsed };
+      return out;
+    });
+  }, [streaming]);
 
   return (
-    <div className="flex flex-col h-full min-h-[calc(100dvh-7.5rem)] md:min-h-[calc(100dvh-3.5rem)]">
-      <div ref={scrollRef} className="flex-1 overflow-y-auto px-3 sm:px-6 py-4 space-y-4 max-w-3xl w-full mx-auto">
+    <div className="flex flex-col h-full min-h-0 flex-1">
+      <div ref={scrollRef} className="flex-1 min-h-0 overflow-y-auto px-3 sm:px-6 py-4 space-y-5 max-w-3xl w-full mx-auto">
         {messages.length === 0 && (
-          <div className="text-center py-16 space-y-4 animate-fade-in">
-            <div className="inline-flex w-16 h-16 rounded-2xl bg-gradient-to-br from-amber-500 to-amber-800 items-center justify-center shadow-xl shadow-amber-900/40">
-              <Sparkles className="w-8 h-8 text-white" />
-            </div>
-            <div>
-              <h1 className="text-xl font-bold">Welcome, Super Admin</h1>
-              <p className="text-sm text-zinc-500 mt-1">যেকোনো কাজ — কোড, ডিপ্লয়, APK, customer message — সবই আমি করবো।</p>
-            </div>
-            <div className="grid grid-cols-2 gap-2 max-w-md mx-auto pt-4">
-              {[
-                "একটি নতুন landing page বানাও",
-                "সব tenant এর health দেখাও",
-                "নতুন mobile app project শুরু করো",
-                "Security audit চালাও",
-              ].map((s) => (
-                <button
-                  key={s}
-                  onClick={() => setInput(s)}
-                  className="text-left text-xs p-3 rounded-xl border border-zinc-800 hover:border-amber-700/60 hover:bg-zinc-900 transition"
-                >
-                  {s}
-                </button>
-              ))}
-            </div>
+          <div className="text-center py-20 animate-fade-in">
+            <p className="text-sm text-zinc-500">
+              যেকোনো কাজ শুরু করতে নিচে লিখুন — কোড, ডিপ্লয়, APK, security, customer support — সবই।
+            </p>
           </div>
         )}
 
@@ -550,6 +546,7 @@ export default function ChatScreen() {
             msg={m}
             streaming={streaming && m.id === messages[messages.length - 1]?.id}
             onEdit={handleEdit}
+            onFeedback={handleFeedback}
           />
         ))}
 
@@ -566,7 +563,7 @@ export default function ChatScreen() {
         )}
       </div>
 
-      <div className="max-w-3xl w-full mx-auto">
+      <div className="max-w-3xl w-full mx-auto shrink-0">
         <ChatInput
           value={input}
           onChange={setInput}
@@ -577,25 +574,6 @@ export default function ChatScreen() {
           onFilesChange={setFiles}
           actions={actions}
         />
-
-        {/* Four primary quick actions below input */}
-        <div className="grid grid-cols-4 gap-2 px-3 sm:px-4 pb-3 -mt-1">
-          {quickActions.map((q) => {
-            const Icon = q.icon;
-            return (
-              <button
-                key={q.id}
-                onClick={q.onClick}
-                className="group flex flex-col items-center gap-1 px-2 py-2 rounded-xl border border-zinc-800/80 bg-zinc-900/40 hover:bg-zinc-900 hover:border-amber-700/50 transition active:scale-95"
-              >
-                <span className="w-7 h-7 rounded-lg bg-gradient-to-br from-amber-500/15 to-amber-800/10 border border-amber-800/30 flex items-center justify-center text-amber-400 group-hover:from-amber-500/30 group-hover:to-amber-700/20 transition">
-                  <Icon className="w-3.5 h-3.5" />
-                </span>
-                <span className="text-[10px] text-zinc-400 group-hover:text-amber-300">{q.label}</span>
-              </button>
-            );
-          })}
-        </div>
       </div>
 
       <SecurityScanPanel open={scanOpen} onClose={() => setScanOpen(false)} />
@@ -603,3 +581,4 @@ export default function ChatScreen() {
     </div>
   );
 }
+
