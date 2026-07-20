@@ -37,7 +37,7 @@ export function ChatInput({
     const el = ta.current;
     if (!el) return;
     el.style.height = "auto";
-    el.style.height = Math.min(el.scrollHeight, 280) + "px";
+    el.style.height = Math.min(el.scrollHeight, 140) + "px";
   }, [value]);
 
   // Close menu on outside click
