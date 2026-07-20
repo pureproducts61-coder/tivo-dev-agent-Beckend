@@ -90,7 +90,7 @@ export function ChatInput({
           placeholder={placeholder || "যা করতে চান লিখুন... (Shift+Enter for newline)"}
           rows={1}
           disabled={streaming}
-          className="w-full resize-none bg-transparent border-0 outline-none px-4 pt-3.5 pb-1 text-sm placeholder:text-zinc-500 leading-relaxed max-h-[280px]"
+          className="w-full resize-none bg-transparent border-0 outline-none px-4 pt-3.5 pb-1 text-sm placeholder:text-zinc-500 leading-relaxed max-h-[140px] overflow-y-auto"
         />
 
         <div className="flex items-center justify-between px-2 pb-2 pt-1">
