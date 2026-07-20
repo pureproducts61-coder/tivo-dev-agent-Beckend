@@ -1,5 +1,5 @@
 import { useEffect, useRef, useState } from "react";
-import { Sparkles, Globe, RefreshCw, ShieldCheck, KeyRound } from "lucide-react";
+import { Globe, RefreshCw, ShieldCheck, KeyRound } from "lucide-react";
 import { useSuperAdmin } from "@/contexts/SuperAdminContext";
 import { ChatMessage, ChatMsg, Artifact, validateArtifact } from "@/components/chat/ChatMessage";
 import { ChatInput, ActionIcons } from "@/components/chat/ChatInput";
@@ -7,6 +7,7 @@ import { SecurityScanPanel } from "@/components/chat/SecurityScanPanel";
 import { VariablesPanel } from "@/components/admin/VariablesPanel";
 import { supabase } from "@/integrations/supabase/client";
 import { logAudit } from "@/lib/audit";
+
 
 const BACKEND = import.meta.env.VITE_SUPABASE_URL;
 
