@@ -10,12 +10,11 @@ type Proposal = {
   description: string | null;
   status: string;
   risk_level: string | null;
-  proposed_by: string | null;
   created_at: string;
   reviewed_at: string | null;
   reviewed_by: string | null;
   payload: any;
-  reason: string | null;
+  change_type?: string | null;
 };
 
 const STATUS_TONE: Record<string, string> = {
