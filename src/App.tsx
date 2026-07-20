@@ -13,6 +13,7 @@ import Chats from "./pages/admin/Chats";
 import Projects from "./pages/admin/Projects";
 import Users from "./pages/admin/Users";
 import System from "./pages/admin/System";
+import Approvals from "./pages/admin/Approvals";
 
 const App = () => (
   <SuperAdminProvider>
