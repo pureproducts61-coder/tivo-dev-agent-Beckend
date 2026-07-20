@@ -25,7 +25,7 @@ export default function SuperAdminLogin() {
       if (!r.ok || !data.ok) throw new Error(data.error || "Login failed");
       if (method === "magic-link-request") { setErr("✉️ Magic link পাঠানো হয়েছে — ইমেইল চেক করুন"); return; }
       login({ email: data.email, masterSecret: data.master_secret, loggedInAt: Date.now() });
-      nav("/super-admin/workspace");
+      nav("/super-admin/app/chats");
     } catch (e: any) {
       setErr(e.message);
     } finally {

@@ -55,7 +55,11 @@ export default function SuperAdminWorkspace() {
   const scrollRef = useRef<HTMLDivElement>(null);
   const abortRef = useRef<AbortController | null>(null);
 
-  useEffect(() => { if (!session) nav("/super-admin/login"); }, [session, nav]);
+  useEffect(() => {
+    if (!session) { nav("/super-admin/login"); return; }
+    // Legacy route — new admin shell lives at /super-admin/app
+    nav("/super-admin/app/chats", { replace: true });
+  }, [session, nav]);
   useEffect(() => { scrollRef.current?.scrollTo({ top: scrollRef.current.scrollHeight, behavior: "smooth" }); }, [messages, statusText]);
 
   if (!session) return null;
