@@ -146,6 +146,24 @@ export default function ChatScreen() {
     scrollRef.current?.scrollTo({ top: scrollRef.current.scrollHeight, behavior: "smooth" });
   }, [messages, statusText]);
 
+  // Consume input draft from notification click / external triggers
+  useEffect(() => {
+    try {
+      const draft = sessionStorage.getItem("tivo_input_draft");
+      if (draft) {
+        setInput((prev) => (prev ? prev + "\n\n" + draft : draft));
+        sessionStorage.removeItem("tivo_input_draft");
+      }
+    } catch {}
+    const h = (e: any) => {
+      const d = typeof e?.detail === "string" ? e.detail : "";
+      if (d) setInput((prev) => (prev ? prev + "\n\n" + d : d));
+    };
+    window.addEventListener("tivo:input-draft", h);
+    return () => window.removeEventListener("tivo:input-draft", h);
+  }, []);
+
+
   async function readFileAsBase64(f: File): Promise<string> {
     return new Promise((res, rej) => {
       const r = new FileReader();
