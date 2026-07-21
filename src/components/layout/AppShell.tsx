@@ -169,6 +169,19 @@ function MobileDrawer({ open, onClose }: { open: boolean; onClose: () => void })
 
 function AlertsPanel({ open, onClose }: { open: boolean; onClose: () => void }) {
   const { alerts, markAllRead } = useAlerts();
+  const nav = useNavigate();
+
+  function handleAlertClick(a: any) {
+    // Preserve the alert as a draft in sessionStorage; ChatScreen will consume it.
+    const draft = a.action_prompt || a.prompt || a.message || a.title || "";
+    if (draft) {
+      try { sessionStorage.setItem("tivo_input_draft", draft); } catch {}
+      window.dispatchEvent(new CustomEvent("tivo:input-draft", { detail: draft }));
+    }
+    onClose();
+    nav("/super-admin/app/chats");
+  }
+
   if (!open) return null;
   return (
     <div className="fixed inset-0 z-50" onClick={onClose}>
@@ -188,9 +201,10 @@ function AlertsPanel({ open, onClose }: { open: boolean; onClose: () => void }) 
         <div className="flex-1 overflow-y-auto p-3 space-y-2">
           {alerts.length === 0 && <p className="text-xs text-zinc-500 text-center py-10">No alerts yet</p>}
           {alerts.map((a) => (
-            <div
+            <button
               key={a.id}
-              className={`p-3 rounded-lg border text-xs ${
+              onClick={() => handleAlertClick(a)}
+              className={`w-full text-left p-3 rounded-lg border text-xs transition hover:border-amber-700/60 ${
                 a.level === "critical"
                   ? "bg-red-950/30 border-red-800"
                   : a.level === "warning"
@@ -200,14 +214,18 @@ function AlertsPanel({ open, onClose }: { open: boolean; onClose: () => void }) 
             >
               <div className="font-semibold">{a.title}</div>
               {a.message && <div className="text-zinc-400 mt-1">{a.message}</div>}
-              <div className="text-zinc-600 mt-1">{new Date(a.created_at).toLocaleString()}</div>
-            </div>
+              <div className="text-zinc-600 mt-1 flex items-center justify-between">
+                <span>{new Date(a.created_at).toLocaleString()}</span>
+                <span className="text-amber-400/70">Open in chat →</span>
+              </div>
+            </button>
           ))}
         </div>
       </aside>
     </div>
   );
 }
+
 
 export function AppShell({ children }: { children?: ReactNode }) {
   const { session } = useSuperAdmin();
