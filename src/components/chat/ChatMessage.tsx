@@ -210,9 +210,42 @@ export function ChatMessage({
       </div>
       <div className="text-sm leading-relaxed text-zinc-100">
         {msg.content ? (
-          <div className="prose prose-invert prose-sm max-w-none prose-pre:bg-zinc-950 prose-pre:border prose-pre:border-zinc-800 prose-pre:rounded-lg prose-code:text-amber-300 prose-headings:text-zinc-100 prose-a:text-amber-400 prose-p:my-2">
-            <ReactMarkdown remarkPlugins={[remarkGfm]}>{msg.content}</ReactMarkdown>
+          <div className="prose prose-invert prose-sm max-w-none prose-code:text-amber-300 prose-headings:text-zinc-100 prose-a:text-amber-400 prose-p:my-2">
+            <ReactMarkdown
+              remarkPlugins={[remarkGfm]}
+              components={{
+                pre: ({ children }: any) => {
+                  // Extract raw code text for the copy button
+                  const codeEl = Array.isArray(children) ? children[0] : children;
+                  const raw =
+                    typeof codeEl === "object" && codeEl?.props?.children
+                      ? Array.isArray(codeEl.props.children)
+                        ? codeEl.props.children.join("")
+                        : String(codeEl.props.children)
+                      : "";
+                  return (
+                    <div className="relative group/code my-2">
+                      <div className="absolute right-2 top-2 opacity-0 group-hover/code:opacity-100 transition z-10">
+                        <CopyBtn text={raw} />
+                      </div>
+                      <pre className="bg-zinc-950 border border-zinc-800 rounded-lg overflow-x-auto p-3 text-[12px]">
+                        {children}
+                      </pre>
+                    </div>
+                  );
+                },
+                code: ({ inline, className, children, ...props }: any) =>
+                  inline ? (
+                    <code className={className} {...props}>{children}</code>
+                  ) : (
+                    <code className={className} {...props}>{children}</code>
+                  ),
+              }}
+            >
+              {msg.content}
+            </ReactMarkdown>
           </div>
+
         ) : streaming ? (
           <span className="inline-flex gap-1 text-amber-400">
             <span className="w-1.5 h-1.5 rounded-full bg-amber-400 animate-bounce" />
