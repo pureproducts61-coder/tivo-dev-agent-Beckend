@@ -127,7 +127,7 @@ export function ChatInput({
                 {menuOpen && (
                   <div
                     onClick={(e) => e.stopPropagation()}
-                    className="absolute left-0 bottom-12 w-64 rounded-2xl border border-zinc-800 bg-zinc-950/95 backdrop-blur-lg shadow-2xl shadow-black/60 p-1.5 z-50 animate-scale-in origin-bottom-left"
+                    className="absolute left-0 bottom-12 w-60 max-h-[52vh] overflow-y-auto overscroll-contain rounded-2xl border border-zinc-800 bg-zinc-950/95 backdrop-blur-lg shadow-2xl shadow-black/60 p-1 z-50 animate-scale-in origin-bottom-left scrollbar-thin scrollbar-thumb-zinc-800"
                   >
                     {actions.map((a) => {
                       const Icon = a.icon;
@@ -138,7 +138,7 @@ export function ChatInput({
                             setMenuOpen(false);
                             a.onClick();
                           }}
-                          className={`w-full flex items-start gap-3 px-3 py-2.5 rounded-xl text-left text-sm transition ${
+                          className={`w-full flex items-center gap-2.5 px-2.5 py-1.5 rounded-lg text-left text-[12px] transition ${
                             a.tone === "danger"
                               ? "text-red-400 hover:bg-red-950/30"
                               : a.tone === "primary"
@@ -146,16 +146,14 @@ export function ChatInput({
                               : "text-zinc-200 hover:bg-zinc-900"
                           }`}
                         >
-                          <Icon className="w-4 h-4 mt-0.5 shrink-0" />
-                          <div className="min-w-0">
-                            <div className="font-medium">{a.label}</div>
-                            {a.desc && <div className="text-[11px] text-zinc-500 mt-0.5">{a.desc}</div>}
-                          </div>
+                          <Icon className="w-3.5 h-3.5 shrink-0" />
+                          <span className="truncate font-medium">{a.label}</span>
                         </button>
                       );
                     })}
                   </div>
                 )}
+
               </div>
             )}
           </div>
