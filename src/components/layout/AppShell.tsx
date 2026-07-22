@@ -64,12 +64,7 @@ function DesktopSidebar({ collapsed, setCollapsed }: { collapsed: boolean; setCo
             <SidebarItem key={i.to} {...i} collapsed={collapsed} />
           ))}
         </div>
-        <div className="space-y-0.5">
-          {!collapsed && <div className="px-2 pt-1 pb-1 text-[10px] uppercase tracking-widest text-zinc-600">Tools</div>}
-          {NAV_SECONDARY.map((i) => (
-            <SidebarItem key={i.to} {...i} collapsed={collapsed} />
-          ))}
-        </div>
+        {/* Legacy tools moved into Settings gear — no duplicates here. */}
       </div>
 
       <div className="border-t border-zinc-900 p-2">
