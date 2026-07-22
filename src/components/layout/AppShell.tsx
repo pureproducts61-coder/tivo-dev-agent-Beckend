@@ -123,24 +123,7 @@ function MobileDrawer({ open, onClose }: { open: boolean; onClose: () => void })
               </NavLink>
             ))}
           </div>
-          <div>
-            <div className="px-2 pb-1 text-[10px] uppercase tracking-widest text-zinc-600">Tools</div>
-            {NAV_SECONDARY.map((i) => (
-              <NavLink
-                key={i.to}
-                to={i.to}
-                onClick={onClose}
-                className={({ isActive }) =>
-                  `flex items-center gap-3 px-2.5 py-2 rounded-lg text-sm ${
-                    isActive ? "bg-amber-500/10 text-amber-300" : "text-zinc-300 hover:bg-zinc-900"
-                  }`
-                }
-              >
-                <i.icon className="w-4 h-4" />
-                {i.label}
-              </NavLink>
-            ))}
-          </div>
+          {/* Legacy tools moved into Settings gear — no duplicates here. */}
         </div>
         <div className="border-t border-zinc-900 p-2">
           <button
