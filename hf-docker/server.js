@@ -261,46 +261,87 @@ const server = http.createServer(async (req, res) => {
 
   // Build APK
   if (url.pathname === "/api/build-apk" && req.method === "POST") {
+    const auth = authorize(req);
+    if (!auth.ok) return sendJson(res, { error: auth.error }, auth.code);
     const body = await readBody(req);
     const buildId = `apk-${crypto.randomBytes(8).toString("hex")}`;
-    
+
     try {
-      const result = await buildApk(buildId, body.files || [], body.config || {});
+      const result = await buildApk(buildId, body.files || [], body.config || {}, auth.tenant);
       cleanupBuilds();
       return sendJson(res, { success: true, build_id: buildId, ...result });
     } catch (err) {
-      return sendJson(res, { success: false, error: err.message, build_id: buildId }, 500);
+      return sendJson(res, { success: false, error: "Build failed", build_id: buildId }, 500);
     }
   }
 
   // Build EXE
   if (url.pathname === "/api/build-exe" && req.method === "POST") {
+    const auth = authorize(req);
+    if (!auth.ok) return sendJson(res, { error: auth.error }, auth.code);
     const body = await readBody(req);
     const buildId = `exe-${crypto.randomBytes(8).toString("hex")}`;
-    
+
     try {
-      const result = await buildExe(buildId, body.files || [], body.config || {});
+      const result = await buildExe(buildId, body.files || [], body.config || {}, auth.tenant);
       cleanupBuilds();
       return sendJson(res, { success: true, build_id: buildId, ...result });
     } catch (err) {
-      return sendJson(res, { success: false, error: err.message, build_id: buildId }, 500);
+      return sendJson(res, { success: false, error: "Build failed", build_id: buildId }, 500);
     }
   }
 
-  // Build status
+  // Build status — tenant-scoped listing only
   if (url.pathname === "/api/builds" && req.method === "GET") {
+    const auth = authorize(req);
+    if (!auth.ok) return sendJson(res, { error: auth.error }, auth.code);
+    const tenantDir = path.join(OUTPUT_DIR, auth.tenant);
     try {
-      const downloads = fs.readdirSync(OUTPUT_DIR).map(f => ({
+      if (!fs.existsSync(tenantDir)) return sendJson(res, { builds: [] });
+      const downloads = fs.readdirSync(tenantDir).map(f => ({
         file: f,
-        size: fs.statSync(path.join(OUTPUT_DIR, f)).size,
-        url: `/downloads/${f}`,
-        created: fs.statSync(path.join(OUTPUT_DIR, f)).mtime.toISOString(),
+        size: fs.statSync(path.join(tenantDir, f)).size,
+        url: `/downloads/${auth.tenant}/${f}`,
+        created: fs.statSync(path.join(tenantDir, f)).mtime.toISOString(),
       }));
       return sendJson(res, { builds: downloads });
     } catch {
       return sendJson(res, { builds: [] });
     }
   }
+
+  // Signed short-lived download URL — issue only for the caller's tenant
+  if (url.pathname === "/api/build-download-url" && req.method === "GET") {
+    const auth = authorize(req);
+    if (!auth.ok) return sendJson(res, { error: auth.error }, auth.code);
+    const file = url.searchParams.get("file") || "";
+    if (!/^[A-Za-z0-9._-]+$/.test(file)) return sendJson(res, { error: "Invalid file" }, 400);
+    const abs = path.join(OUTPUT_DIR, auth.tenant, file);
+    if (!fs.existsSync(abs)) return sendJson(res, { error: "Not found" }, 404);
+    const exp = Math.floor(Date.now() / 1000) + 300; // 5 min
+    const payload = `${auth.tenant}:${file}:${exp}`;
+    const sig = crypto.createHmac("sha256", MASTER_SECRET).update(payload).digest("hex");
+    return sendJson(res, { url: `/downloads/${auth.tenant}/${file}?exp=${exp}&sig=${sig}` });
+  }
+
+  // Verify signed download (nginx should proxy /downloads/* to this if possible)
+  if (url.pathname.startsWith("/downloads/") && req.method === "GET") {
+    const rest = url.pathname.slice("/downloads/".length);
+    const [tenant, file] = rest.split("/", 2);
+    const exp = parseInt(url.searchParams.get("exp") || "0", 10);
+    const sig = url.searchParams.get("sig") || "";
+    if (!tenant || !file || !exp || !sig) return sendJson(res, { error: "Signed URL required" }, 403);
+    if (Date.now() / 1000 > exp) return sendJson(res, { error: "Link expired" }, 403);
+    const expected = crypto.createHmac("sha256", MASTER_SECRET).update(`${tenant}:${file}:${exp}`).digest("hex");
+    const a = Buffer.from(sig), b = Buffer.from(expected);
+    if (a.length !== b.length || !crypto.timingSafeEqual(a, b)) return sendJson(res, { error: "Invalid signature" }, 403);
+    const abs = path.join(OUTPUT_DIR, tenant, file);
+    if (!fs.existsSync(abs)) return sendJson(res, { error: "Not found" }, 404);
+    res.writeHead(200, { "Content-Type": "application/octet-stream", "Content-Disposition": `attachment; filename="${file}"` });
+    fs.createReadStream(abs).pipe(res);
+    return;
+  }
+
 
   sendJson(res, { error: "Not found" }, 404);
 });
