@@ -1149,6 +1149,7 @@ serve(async (req) => {
 
     // === credentials/history — rotation log ===
     if (action === "credentials/history") {
+      if (!isSA) return jsonResponse({ error: "Super Admin only" }, 403);
       if (!supabase) return jsonResponse({ error: "DB unavailable" }, 503);
       const k = url.searchParams.get("key_name");
       let q = tFilter(supabase.from("credential_history").select("*"))

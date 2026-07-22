@@ -2,7 +2,7 @@
 // Handles APK/EXE compilation requests from Supabase Edge Functions
 
 const http = require("http");
-const { execSync, exec } = require("child_process");
+const { execSync, execFileSync } = require("child_process");
 const fs = require("fs");
 const path = require("path");
 const crypto = require("crypto");
@@ -10,10 +10,37 @@ const crypto = require("crypto");
 const PORT = 7861; // Internal API port, nginx proxies /api/* here
 const BUILDS_DIR = "/tmp/builds";
 const OUTPUT_DIR = "/usr/share/nginx/html/downloads";
+const MASTER_SECRET = process.env.MASTER_SECRET || "";
 
 // Ensure directories
 fs.mkdirSync(BUILDS_DIR, { recursive: true });
 fs.mkdirSync(OUTPUT_DIR, { recursive: true });
+
+// Allow-list validators for values interpolated into commands / package.json
+function sanitizeAppName(name) {
+  const s = String(name || "TivoApp").replace(/[^A-Za-z0-9 _-]/g, "").trim().slice(0, 40);
+  return s || "TivoApp";
+}
+function sanitizePackageName(pkg) {
+  const s = String(pkg || "com.tivo.app").replace(/[^A-Za-z0-9._]/g, "").slice(0, 80);
+  return /^[a-zA-Z][a-zA-Z0-9_]*(\.[a-zA-Z][a-zA-Z0-9_]*)+$/.test(s) ? s : "com.tivo.app";
+}
+function sanitizeTenant(t) {
+  return String(t || "").replace(/[^A-Za-z0-9_-]/g, "").slice(0, 64);
+}
+function authorize(req) {
+  if (!MASTER_SECRET) return { ok: false, code: 503, error: "Build server not configured" };
+  const provided = req.headers["x-master-secret"] || "";
+  const a = Buffer.from(String(provided));
+  const b = Buffer.from(MASTER_SECRET);
+  if (a.length !== b.length || !crypto.timingSafeEqual(a, b)) {
+    return { ok: false, code: 401, error: "Unauthorized" };
+  }
+  const tenant = sanitizeTenant(req.headers["x-tenant-id"]);
+  if (!tenant) return { ok: false, code: 400, error: "Missing x-tenant-id" };
+  return { ok: true, tenant };
+}
+
 
 function sendJson(res, data, status = 200) {
   res.writeHead(status, {
@@ -45,44 +72,44 @@ function writeProjectFiles(buildDir, files) {
 }
 
 // === APK BUILD ===
-async function buildApk(buildId, files, config) {
+async function buildApk(buildId, files, config, tenant) {
   const buildDir = path.join(BUILDS_DIR, buildId);
-  const outputPath = path.join(OUTPUT_DIR, `${buildId}.apk`);
-  
+  const tenantOutDir = path.join(OUTPUT_DIR, tenant);
+  fs.mkdirSync(tenantOutDir, { recursive: true });
+  const outputPath = path.join(tenantOutDir, `${buildId}.apk`);
+
   fs.mkdirSync(buildDir, { recursive: true });
   writeProjectFiles(buildDir, files);
 
   // If it's a web project, wrap in Capacitor/Cordova
   const hasAndroidDir = files.some(f => f.path.includes("android/") || f.path.includes("AndroidManifest.xml"));
-  
+
   if (!hasAndroidDir) {
     // Web project → wrap with Capacitor
-    const appName = config.app_name || "TivoApp";
-    const packageName = config.package_name || "com.tivo.app";
-    
-    // Build web first
+    const appName = sanitizeAppName(config.app_name);
+    const packageName = sanitizePackageName(config.package_name);
+
+    // Build web first — ignore user-supplied lifecycle scripts to prevent RCE via package.json
     if (fs.existsSync(path.join(buildDir, "package.json"))) {
-      execSync("npm install && npm run build", { cwd: buildDir, timeout: 120000, stdio: "pipe" });
+      execFileSync("npm", ["install", "--ignore-scripts"], { cwd: buildDir, timeout: 120000, stdio: "pipe" });
+      execFileSync("npm", ["run", "build", "--if-present", "--ignore-scripts"], { cwd: buildDir, timeout: 120000, stdio: "pipe" });
     }
 
-    // Init Capacitor
-    execSync(`npx @capacitor/cli init "${appName}" "${packageName}" --web-dir dist`, {
+    // Init Capacitor — pass sanitized values as argv, never shell-interpolated
+    execFileSync("npx", ["@capacitor/cli", "init", appName, packageName, "--web-dir", "dist"], {
       cwd: buildDir, timeout: 60000, stdio: "pipe"
     });
-    execSync("npm install @capacitor/core @capacitor/android", {
+    execFileSync("npm", ["install", "--ignore-scripts", "@capacitor/core", "@capacitor/android"], {
       cwd: buildDir, timeout: 60000, stdio: "pipe"
     });
-    execSync("npx cap add android", {
-      cwd: buildDir, timeout: 120000, stdio: "pipe"
-    });
-    execSync("npx cap sync android", {
-      cwd: buildDir, timeout: 120000, stdio: "pipe"
-    });
+    execFileSync("npx", ["cap", "add", "android"], { cwd: buildDir, timeout: 120000, stdio: "pipe" });
+    execFileSync("npx", ["cap", "sync", "android"], { cwd: buildDir, timeout: 120000, stdio: "pipe" });
   }
 
   // Gradle build
   const androidDir = path.join(buildDir, "android");
-  execSync("chmod +x gradlew && ./gradlew assembleRelease --no-daemon", {
+  execFileSync("chmod", ["+x", "gradlew"], { cwd: androidDir, stdio: "pipe" });
+  execFileSync("./gradlew", ["assembleRelease", "--no-daemon"], {
     cwd: androidDir, timeout: 300000, stdio: "pipe",
     env: { ...process.env, ANDROID_HOME: "/opt/android-sdk", JAVA_HOME: "/usr/lib/jvm/java-17-openjdk-amd64" }
   });
@@ -91,28 +118,38 @@ async function buildApk(buildId, files, config) {
   const apkPath = findFile(androidDir, ".apk");
   if (apkPath) {
     fs.copyFileSync(apkPath, outputPath);
-    return { success: true, path: outputPath, download_url: `/downloads/${buildId}.apk` };
+    return { success: true, path: outputPath, download_url: `/downloads/${tenant}/${buildId}.apk` };
   }
   throw new Error("APK build completed but output file not found");
 }
 
 // === EXE BUILD (Electron) ===
-async function buildExe(buildId, files, config) {
+async function buildExe(buildId, files, config, tenant) {
   const buildDir = path.join(BUILDS_DIR, buildId);
-  const outputPath = path.join(OUTPUT_DIR, `${buildId}-win32-x64.zip`);
-  
+  const tenantOutDir = path.join(OUTPUT_DIR, tenant);
+  fs.mkdirSync(tenantOutDir, { recursive: true });
+  const appName = sanitizeAppName(config.app_name);
+  const outputPath = path.join(tenantOutDir, `${buildId}-win32-x64.zip`);
+
   fs.mkdirSync(buildDir, { recursive: true });
   writeProjectFiles(buildDir, files);
-
-  const appName = config.app_name || "TivoApp";
 
   // Ensure package.json has main entry
   const pkgPath = path.join(buildDir, "package.json");
   let pkg = {};
   if (fs.existsSync(pkgPath)) {
-    pkg = JSON.parse(fs.readFileSync(pkgPath, "utf-8"));
+    try { pkg = JSON.parse(fs.readFileSync(pkgPath, "utf-8")); } catch { pkg = {}; }
   }
-  
+
+  // Strip any user-supplied lifecycle scripts to prevent RCE via `npm install`
+  pkg.scripts = pkg.scripts && typeof pkg.scripts === "object" ? { ...pkg.scripts } : {};
+  const userBuild = typeof pkg.scripts.build === "string" ? pkg.scripts.build : null;
+  for (const k of Object.keys(pkg.scripts)) {
+    if (k.startsWith("pre") || k.startsWith("post") || ["install", "prepare", "prepublish", "prepack"].includes(k)) {
+      delete pkg.scripts[k];
+    }
+  }
+
   // Create electron main file if not present
   const electronMain = path.join(buildDir, "electron-main.cjs");
   if (!fs.existsSync(electronMain)) {
@@ -139,30 +176,26 @@ app.on('window-all-closed', () => { if (process.platform !== 'darwin') app.quit(
   pkg.version = pkg.version || "1.0.0";
   fs.writeFileSync(pkgPath, JSON.stringify(pkg, null, 2));
 
-  // Install deps & build
-  execSync("npm install", { cwd: buildDir, timeout: 120000, stdio: "pipe" });
-  
-  // Build web if vite/webpack exists
-  if (pkg.scripts?.build) {
-    execSync("npm run build", { cwd: buildDir, timeout: 120000, stdio: "pipe" });
+  // Install deps (no lifecycle scripts) & build
+  execFileSync("npm", ["install", "--ignore-scripts"], { cwd: buildDir, timeout: 120000, stdio: "pipe" });
+  if (userBuild) {
+    execFileSync("npm", ["run", "build", "--if-present", "--ignore-scripts"], { cwd: buildDir, timeout: 120000, stdio: "pipe" });
   }
 
-  // Package with electron-packager
-  execSync(
-    `npx @electron/packager "${buildDir}" "${appName}" --platform=win32 --arch=x64 --out="${BUILDS_DIR}/${buildId}-out" --overwrite --no-prune`,
-    { timeout: 300000, stdio: "pipe" }
-  );
+  const outParent = `${BUILDS_DIR}/${buildId}-out`;
+  // Package with electron-packager — sanitized appName passed as argv
+  execFileSync("npx", ["@electron/packager", buildDir, appName, "--platform=win32", "--arch=x64", `--out=${outParent}`, "--overwrite", "--no-prune"], {
+    timeout: 300000, stdio: "pipe"
+  });
 
-  // Zip the output
-  const outDir = `${BUILDS_DIR}/${buildId}-out/${appName}-win32-x64`;
+  const outDir = `${outParent}/${appName}-win32-x64`;
   if (fs.existsSync(outDir)) {
-    execSync(`cd "${BUILDS_DIR}/${buildId}-out" && zip -r "${outputPath}" "${appName}-win32-x64/"`, {
-      timeout: 120000, stdio: "pipe"
-    });
-    return { success: true, path: outputPath, download_url: `/downloads/${buildId}-win32-x64.zip` };
+    execFileSync("zip", ["-r", outputPath, `${appName}-win32-x64/`], { cwd: outParent, timeout: 120000, stdio: "pipe" });
+    return { success: true, path: outputPath, download_url: `/downloads/${tenant}/${buildId}-win32-x64.zip` };
   }
   throw new Error("EXE build completed but output not found");
 }
+
 
 // Find file by extension recursively
 function findFile(dir, ext) {
@@ -228,46 +261,87 @@ const server = http.createServer(async (req, res) => {
 
   // Build APK
   if (url.pathname === "/api/build-apk" && req.method === "POST") {
+    const auth = authorize(req);
+    if (!auth.ok) return sendJson(res, { error: auth.error }, auth.code);
     const body = await readBody(req);
     const buildId = `apk-${crypto.randomBytes(8).toString("hex")}`;
-    
+
     try {
-      const result = await buildApk(buildId, body.files || [], body.config || {});
+      const result = await buildApk(buildId, body.files || [], body.config || {}, auth.tenant);
       cleanupBuilds();
       return sendJson(res, { success: true, build_id: buildId, ...result });
     } catch (err) {
-      return sendJson(res, { success: false, error: err.message, build_id: buildId }, 500);
+      return sendJson(res, { success: false, error: "Build failed", build_id: buildId }, 500);
     }
   }
 
   // Build EXE
   if (url.pathname === "/api/build-exe" && req.method === "POST") {
+    const auth = authorize(req);
+    if (!auth.ok) return sendJson(res, { error: auth.error }, auth.code);
     const body = await readBody(req);
     const buildId = `exe-${crypto.randomBytes(8).toString("hex")}`;
-    
+
     try {
-      const result = await buildExe(buildId, body.files || [], body.config || {});
+      const result = await buildExe(buildId, body.files || [], body.config || {}, auth.tenant);
       cleanupBuilds();
       return sendJson(res, { success: true, build_id: buildId, ...result });
     } catch (err) {
-      return sendJson(res, { success: false, error: err.message, build_id: buildId }, 500);
+      return sendJson(res, { success: false, error: "Build failed", build_id: buildId }, 500);
     }
   }
 
-  // Build status
+  // Build status — tenant-scoped listing only
   if (url.pathname === "/api/builds" && req.method === "GET") {
+    const auth = authorize(req);
+    if (!auth.ok) return sendJson(res, { error: auth.error }, auth.code);
+    const tenantDir = path.join(OUTPUT_DIR, auth.tenant);
     try {
-      const downloads = fs.readdirSync(OUTPUT_DIR).map(f => ({
+      if (!fs.existsSync(tenantDir)) return sendJson(res, { builds: [] });
+      const downloads = fs.readdirSync(tenantDir).map(f => ({
         file: f,
-        size: fs.statSync(path.join(OUTPUT_DIR, f)).size,
-        url: `/downloads/${f}`,
-        created: fs.statSync(path.join(OUTPUT_DIR, f)).mtime.toISOString(),
+        size: fs.statSync(path.join(tenantDir, f)).size,
+        url: `/downloads/${auth.tenant}/${f}`,
+        created: fs.statSync(path.join(tenantDir, f)).mtime.toISOString(),
       }));
       return sendJson(res, { builds: downloads });
     } catch {
       return sendJson(res, { builds: [] });
     }
   }
+
+  // Signed short-lived download URL — issue only for the caller's tenant
+  if (url.pathname === "/api/build-download-url" && req.method === "GET") {
+    const auth = authorize(req);
+    if (!auth.ok) return sendJson(res, { error: auth.error }, auth.code);
+    const file = url.searchParams.get("file") || "";
+    if (!/^[A-Za-z0-9._-]+$/.test(file)) return sendJson(res, { error: "Invalid file" }, 400);
+    const abs = path.join(OUTPUT_DIR, auth.tenant, file);
+    if (!fs.existsSync(abs)) return sendJson(res, { error: "Not found" }, 404);
+    const exp = Math.floor(Date.now() / 1000) + 300; // 5 min
+    const payload = `${auth.tenant}:${file}:${exp}`;
+    const sig = crypto.createHmac("sha256", MASTER_SECRET).update(payload).digest("hex");
+    return sendJson(res, { url: `/downloads/${auth.tenant}/${file}?exp=${exp}&sig=${sig}` });
+  }
+
+  // Verify signed download (nginx should proxy /downloads/* to this if possible)
+  if (url.pathname.startsWith("/downloads/") && req.method === "GET") {
+    const rest = url.pathname.slice("/downloads/".length);
+    const [tenant, file] = rest.split("/", 2);
+    const exp = parseInt(url.searchParams.get("exp") || "0", 10);
+    const sig = url.searchParams.get("sig") || "";
+    if (!tenant || !file || !exp || !sig) return sendJson(res, { error: "Signed URL required" }, 403);
+    if (Date.now() / 1000 > exp) return sendJson(res, { error: "Link expired" }, 403);
+    const expected = crypto.createHmac("sha256", MASTER_SECRET).update(`${tenant}:${file}:${exp}`).digest("hex");
+    const a = Buffer.from(sig), b = Buffer.from(expected);
+    if (a.length !== b.length || !crypto.timingSafeEqual(a, b)) return sendJson(res, { error: "Invalid signature" }, 403);
+    const abs = path.join(OUTPUT_DIR, tenant, file);
+    if (!fs.existsSync(abs)) return sendJson(res, { error: "Not found" }, 404);
+    res.writeHead(200, { "Content-Type": "application/octet-stream", "Content-Disposition": `attachment; filename="${file}"` });
+    fs.createReadStream(abs).pipe(res);
+    return;
+  }
+
 
   sendJson(res, { error: "Not found" }, 404);
 });
