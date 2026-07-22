@@ -1,7 +1,7 @@
 import { ReactNode, useState } from "react";
 import { NavLink, Outlet, useNavigate } from "react-router-dom";
 import {
-  MessageSquare, FolderKanban, Users, Cog, Bot, Gauge, Wrench, CheckSquare,
+  MessageSquare, FolderKanban, Users, Cog, CheckSquare,
   Bell, Settings as SettingsIcon, Menu, LogOut, PanelLeftClose, PanelLeft,
 } from "lucide-react";
 import { useSuperAdmin } from "@/contexts/SuperAdminContext";
@@ -9,18 +9,14 @@ import { useAlerts } from "@/hooks/useAlerts";
 import { SettingsSheet } from "./SettingsSheet";
 import { Petals } from "./Petals";
 
+// Single source of truth — no duplicate "Tools" section.
+// Legacy Dashboard / Debug / AI Workspace are reachable from the Settings gear.
 const NAV_PRIMARY = [
   { to: "/super-admin/app/chats", icon: MessageSquare, label: "Chat" },
   { to: "/super-admin/app/approvals", icon: CheckSquare, label: "Approvals" },
   { to: "/super-admin/app/projects", icon: FolderKanban, label: "Projects" },
   { to: "/super-admin/app/users", icon: Users, label: "Users" },
   { to: "/super-admin/app/system", icon: Cog, label: "System" },
-];
-
-const NAV_SECONDARY = [
-  { to: "/super-admin/workspace", icon: Bot, label: "AI Workspace" },
-  { to: "/super-admin/dashboard", icon: Gauge, label: "Dashboard" },
-  { to: "/super-admin/debug", icon: Wrench, label: "Debug" },
 ];
 
 function SidebarItem({ to, icon: Icon, label, collapsed }: any) {
