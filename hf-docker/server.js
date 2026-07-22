@@ -2,7 +2,7 @@
 // Handles APK/EXE compilation requests from Supabase Edge Functions
 
 const http = require("http");
-const { execSync, exec } = require("child_process");
+const { execSync, execFileSync } = require("child_process");
 const fs = require("fs");
 const path = require("path");
 const crypto = require("crypto");
@@ -10,10 +10,37 @@ const crypto = require("crypto");
 const PORT = 7861; // Internal API port, nginx proxies /api/* here
 const BUILDS_DIR = "/tmp/builds";
 const OUTPUT_DIR = "/usr/share/nginx/html/downloads";
+const MASTER_SECRET = process.env.MASTER_SECRET || "";
 
 // Ensure directories
 fs.mkdirSync(BUILDS_DIR, { recursive: true });
 fs.mkdirSync(OUTPUT_DIR, { recursive: true });
+
+// Allow-list validators for values interpolated into commands / package.json
+function sanitizeAppName(name) {
+  const s = String(name || "TivoApp").replace(/[^A-Za-z0-9 _-]/g, "").trim().slice(0, 40);
+  return s || "TivoApp";
+}
+function sanitizePackageName(pkg) {
+  const s = String(pkg || "com.tivo.app").replace(/[^A-Za-z0-9._]/g, "").slice(0, 80);
+  return /^[a-zA-Z][a-zA-Z0-9_]*(\.[a-zA-Z][a-zA-Z0-9_]*)+$/.test(s) ? s : "com.tivo.app";
+}
+function sanitizeTenant(t) {
+  return String(t || "").replace(/[^A-Za-z0-9_-]/g, "").slice(0, 64);
+}
+function authorize(req) {
+  if (!MASTER_SECRET) return { ok: false, code: 503, error: "Build server not configured" };
+  const provided = req.headers["x-master-secret"] || "";
+  const a = Buffer.from(String(provided));
+  const b = Buffer.from(MASTER_SECRET);
+  if (a.length !== b.length || !crypto.timingSafeEqual(a, b)) {
+    return { ok: false, code: 401, error: "Unauthorized" };
+  }
+  const tenant = sanitizeTenant(req.headers["x-tenant-id"]);
+  if (!tenant) return { ok: false, code: 400, error: "Missing x-tenant-id" };
+  return { ok: true, tenant };
+}
+
 
 function sendJson(res, data, status = 200) {
   res.writeHead(status, {
