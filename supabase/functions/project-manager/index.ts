@@ -202,10 +202,13 @@ serve(async (req) => {
       const { id, ...updates } = body;
       if (!id) return jsonResponse({ error: "id required" }, 400);
 
+      // Verify ownership BEFORE any storage write (prevents cross-tenant overwrite/defacement)
+      const { data: owned } = await supabase.from("projects").select("id, version_history, files").eq("id", id).eq("tenant_id", tenantId).maybeSingle();
+      if (!owned) return jsonResponse({ error: "Project not found" }, 404);
+
       // Save version before update if files changed
       if (updates.files) {
-        const { data: current } = await supabase.from("projects").select("version_history, files").eq("id", id).eq("tenant_id", tenantId).single();
-        const history = (current?.version_history as any[]) || [];
+        const history = (owned.version_history as any[]) || [];
         history.push({
           version: history.length + 1,
           timestamp: new Date().toISOString(),
@@ -238,6 +241,10 @@ serve(async (req) => {
     if (action === "delete" && req.method === "DELETE") {
       const { id } = body;
       if (!id) return jsonResponse({ error: "id required" }, 400);
+
+      // Verify ownership BEFORE storage cleanup (prevents cross-tenant file deletion)
+      const { data: owned } = await supabase.from("projects").select("id").eq("id", id).eq("tenant_id", tenantId).maybeSingle();
+      if (!owned) return jsonResponse({ error: "Project not found" }, 404);
 
       // Recursively delete storage files
       async function deleteFolder(prefix: string) {
