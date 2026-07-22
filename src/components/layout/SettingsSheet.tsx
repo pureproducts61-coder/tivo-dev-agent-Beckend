@@ -1,4 +1,5 @@
 import { useEffect, useState } from "react";
+import { Link } from "react-router-dom";
 import { useSuperAdmin } from "@/contexts/SuperAdminContext";
 
 const BACKEND = import.meta.env.VITE_SUPABASE_URL;
@@ -115,6 +116,16 @@ export function SettingsSheet({ open, onClose }: { open: boolean; onClose: () =>
         </div>
 
         <div className="flex-1 overflow-y-auto p-4 space-y-5 text-sm">
+          {/* Tools (moved out of hamburger to avoid duplicates) */}
+          <section className="rounded-xl border border-zinc-800 p-3 space-y-2">
+            <div className="text-xs text-zinc-400">Tools</div>
+            <div className="grid grid-cols-3 gap-2 text-[11px]">
+              <Link onClick={onClose} to="/super-admin/workspace" className="py-2 rounded-lg bg-zinc-900 border border-zinc-800 text-center hover:border-amber-700">🤖 AI Workspace</Link>
+              <Link onClick={onClose} to="/super-admin/dashboard" className="py-2 rounded-lg bg-zinc-900 border border-zinc-800 text-center hover:border-amber-700">📊 Dashboard</Link>
+              <Link onClick={onClose} to="/super-admin/debug" className="py-2 rounded-lg bg-zinc-900 border border-zinc-800 text-center hover:border-amber-700">🔧 Debug</Link>
+            </div>
+          </section>
+
           {/* Mode */}
           <section className="rounded-xl border border-zinc-800 p-3 space-y-2">
             <div className="text-xs text-zinc-400">Runtime Mode</div>

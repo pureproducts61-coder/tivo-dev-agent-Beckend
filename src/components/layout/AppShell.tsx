@@ -1,7 +1,7 @@
 import { ReactNode, useState } from "react";
 import { NavLink, Outlet, useNavigate } from "react-router-dom";
 import {
-  MessageSquare, FolderKanban, Users, Cog, Bot, Gauge, Wrench, CheckSquare,
+  MessageSquare, FolderKanban, Users, Cog, CheckSquare,
   Bell, Settings as SettingsIcon, Menu, LogOut, PanelLeftClose, PanelLeft,
 } from "lucide-react";
 import { useSuperAdmin } from "@/contexts/SuperAdminContext";
@@ -9,18 +9,14 @@ import { useAlerts } from "@/hooks/useAlerts";
 import { SettingsSheet } from "./SettingsSheet";
 import { Petals } from "./Petals";
 
+// Single source of truth — no duplicate "Tools" section.
+// Legacy Dashboard / Debug / AI Workspace are reachable from the Settings gear.
 const NAV_PRIMARY = [
   { to: "/super-admin/app/chats", icon: MessageSquare, label: "Chat" },
   { to: "/super-admin/app/approvals", icon: CheckSquare, label: "Approvals" },
   { to: "/super-admin/app/projects", icon: FolderKanban, label: "Projects" },
   { to: "/super-admin/app/users", icon: Users, label: "Users" },
   { to: "/super-admin/app/system", icon: Cog, label: "System" },
-];
-
-const NAV_SECONDARY = [
-  { to: "/super-admin/workspace", icon: Bot, label: "AI Workspace" },
-  { to: "/super-admin/dashboard", icon: Gauge, label: "Dashboard" },
-  { to: "/super-admin/debug", icon: Wrench, label: "Debug" },
 ];
 
 function SidebarItem({ to, icon: Icon, label, collapsed }: any) {
@@ -68,12 +64,7 @@ function DesktopSidebar({ collapsed, setCollapsed }: { collapsed: boolean; setCo
             <SidebarItem key={i.to} {...i} collapsed={collapsed} />
           ))}
         </div>
-        <div className="space-y-0.5">
-          {!collapsed && <div className="px-2 pt-1 pb-1 text-[10px] uppercase tracking-widest text-zinc-600">Tools</div>}
-          {NAV_SECONDARY.map((i) => (
-            <SidebarItem key={i.to} {...i} collapsed={collapsed} />
-          ))}
-        </div>
+        {/* Legacy tools moved into Settings gear — no duplicates here. */}
       </div>
 
       <div className="border-t border-zinc-900 p-2">
@@ -132,24 +123,7 @@ function MobileDrawer({ open, onClose }: { open: boolean; onClose: () => void })
               </NavLink>
             ))}
           </div>
-          <div>
-            <div className="px-2 pb-1 text-[10px] uppercase tracking-widest text-zinc-600">Tools</div>
-            {NAV_SECONDARY.map((i) => (
-              <NavLink
-                key={i.to}
-                to={i.to}
-                onClick={onClose}
-                className={({ isActive }) =>
-                  `flex items-center gap-3 px-2.5 py-2 rounded-lg text-sm ${
-                    isActive ? "bg-amber-500/10 text-amber-300" : "text-zinc-300 hover:bg-zinc-900"
-                  }`
-                }
-              >
-                <i.icon className="w-4 h-4" />
-                {i.label}
-              </NavLink>
-            ))}
-          </div>
+          {/* Legacy tools moved into Settings gear — no duplicates here. */}
         </div>
         <div className="border-t border-zinc-900 p-2">
           <button
