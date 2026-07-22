@@ -49,7 +49,7 @@ export function ChatInput({
   }, [menuOpen]);
 
   return (
-    <div className="sticky bottom-0 z-20 px-2 sm:px-4 pt-2 pb-[max(0.5rem,env(safe-area-inset-bottom))] bg-gradient-to-t from-zinc-950 via-zinc-950/95 to-transparent">
+    <div className="relative z-20 px-2 sm:px-4 pt-2 pb-[max(0.5rem,env(safe-area-inset-bottom))] bg-zinc-950 border-t border-zinc-900">
       {files.length > 0 && (
         <div className="flex flex-wrap gap-1.5 px-1 pb-2">
           {files.map((f, i) => (
