@@ -142,11 +142,10 @@ function MobileDrawer({ open, onClose }: { open: boolean; onClose: () => void })
 }
 
 function AlertsPanel({ open, onClose }: { open: boolean; onClose: () => void }) {
-  const { alerts, markAllRead } = useAlerts();
+  const { alerts, markAllRead, deleteAlert, deleteAll } = useAlerts();
   const nav = useNavigate();
 
   function handleAlertClick(a: any) {
-    // Preserve the alert as a draft in sessionStorage; ChatScreen will consume it.
     const draft = a.action_prompt || a.prompt || a.message || a.title || "";
     if (draft) {
       try { sessionStorage.setItem("tivo_input_draft", draft); } catch {}
@@ -168,17 +167,24 @@ function AlertsPanel({ open, onClose }: { open: boolean; onClose: () => void }) 
           <h2 className="font-semibold text-sm flex items-center gap-2">
             <Bell className="w-4 h-4 text-amber-400" /> Alerts
           </h2>
-          <button onClick={markAllRead} className="text-[11px] text-amber-400 hover:underline">
-            Mark all read
-          </button>
+          <div className="flex items-center gap-2">
+            <button onClick={markAllRead} className="text-[11px] text-amber-400 hover:underline">
+              Mark all read
+            </button>
+            <button
+              onClick={() => { if (confirm("সব notification মুছে ফেলবে?")) deleteAll(); }}
+              className="text-[11px] text-red-400 hover:underline"
+            >
+              Clear all
+            </button>
+          </div>
         </div>
         <div className="flex-1 overflow-y-auto p-3 space-y-2">
           {alerts.length === 0 && <p className="text-xs text-zinc-500 text-center py-10">No alerts yet</p>}
           {alerts.map((a) => (
-            <button
+            <div
               key={a.id}
-              onClick={() => handleAlertClick(a)}
-              className={`w-full text-left p-3 rounded-lg border text-xs transition hover:border-amber-700/60 ${
+              className={`group relative rounded-lg border text-xs transition hover:border-amber-700/60 ${
                 a.level === "critical"
                   ? "bg-red-950/30 border-red-800"
                   : a.level === "warning"
@@ -186,13 +192,25 @@ function AlertsPanel({ open, onClose }: { open: boolean; onClose: () => void }) 
                   : "bg-zinc-900 border-zinc-800"
               }`}
             >
-              <div className="font-semibold">{a.title}</div>
-              {a.message && <div className="text-zinc-400 mt-1">{a.message}</div>}
-              <div className="text-zinc-600 mt-1 flex items-center justify-between">
-                <span>{new Date(a.created_at).toLocaleString()}</span>
-                <span className="text-amber-400/70">Open in chat →</span>
-              </div>
-            </button>
+              <button
+                onClick={() => handleAlertClick(a)}
+                className="w-full text-left p-3 pr-9"
+              >
+                <div className="font-semibold">{a.title}</div>
+                {a.message && <div className="text-zinc-400 mt-1">{a.message}</div>}
+                <div className="text-zinc-600 mt-1 flex items-center justify-between">
+                  <span>{new Date(a.created_at).toLocaleString()}</span>
+                  <span className="text-amber-400/70">Open in chat →</span>
+                </div>
+              </button>
+              <button
+                onClick={(e) => { e.stopPropagation(); deleteAlert(a.id); }}
+                className="absolute top-2 right-2 p-1 rounded-md text-zinc-500 hover:text-red-400 hover:bg-red-950/40 opacity-0 group-hover:opacity-100 transition"
+                aria-label="Delete notification"
+              >
+                <Trash2 className="w-3.5 h-3.5" />
+              </button>
+            </div>
           ))}
         </div>
       </aside>
