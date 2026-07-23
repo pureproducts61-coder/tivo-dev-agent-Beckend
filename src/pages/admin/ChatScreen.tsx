@@ -151,8 +151,11 @@ export default function ChatScreen() {
   const [statusText, setStatusText] = useState<string | null>(null);
   const [scanOpen, setScanOpen] = useState(false);
   const [varsOpen, setVarsOpen] = useState(false);
+  const [chips, setChips] = useState<string[]>([]);
+  const [chipsLoading, setChipsLoading] = useState(false);
   const scrollRef = useRef<HTMLDivElement>(null);
   const abortRef = useRef<AbortController | null>(null);
+  const chipsAbortRef = useRef<AbortController | null>(null);
 
   useEffect(() => {
     scrollRef.current?.scrollTo({ top: scrollRef.current.scrollHeight, behavior: "smooth" });
