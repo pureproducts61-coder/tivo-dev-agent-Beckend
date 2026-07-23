@@ -205,6 +205,7 @@ export default function ChatScreen() {
     setInput("");
     const filesToSend = files;
     setFiles([]);
+    setChips([]); // clear stale chips on new turn
     setStreaming(true);
     setStatusText("চিন্তা করছি...");
 
