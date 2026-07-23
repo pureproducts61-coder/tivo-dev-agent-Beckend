@@ -4,6 +4,7 @@ import { ChatMessage, ChatMsg, Artifact, validateArtifact } from "@/components/c
 import { ChatInput, ActionIcons } from "@/components/chat/ChatInput";
 import { SecurityScanPanel } from "@/components/chat/SecurityScanPanel";
 import { VariablesPanel } from "@/components/admin/VariablesPanel";
+import { SuggestionChips } from "@/components/chat/SuggestionChips";
 import { supabase } from "@/integrations/supabase/client";
 import { logAudit } from "@/lib/audit";
 
@@ -150,8 +151,11 @@ export default function ChatScreen() {
   const [statusText, setStatusText] = useState<string | null>(null);
   const [scanOpen, setScanOpen] = useState(false);
   const [varsOpen, setVarsOpen] = useState(false);
+  const [chips, setChips] = useState<string[]>([]);
+  const [chipsLoading, setChipsLoading] = useState(false);
   const scrollRef = useRef<HTMLDivElement>(null);
   const abortRef = useRef<AbortController | null>(null);
+  const chipsAbortRef = useRef<AbortController | null>(null);
 
   useEffect(() => {
     scrollRef.current?.scrollTo({ top: scrollRef.current.scrollHeight, behavior: "smooth" });
@@ -201,6 +205,7 @@ export default function ChatScreen() {
     setInput("");
     const filesToSend = files;
     setFiles([]);
+    setChips([]); // clear stale chips on new turn
     setStreaming(true);
     setStatusText("চিন্তা করছি...");
 
@@ -558,6 +563,78 @@ export default function ChatScreen() {
     });
   }, [streaming]);
 
+  // Generate smart next-step chips after each assistant reply.
+  // Chips describe *next actions*, not restatements of the answer.
+  useEffect(() => {
+    if (streaming || !session) return;
+    const last = messages[messages.length - 1];
+    if (!last || last.role !== "assistant" || !last.content) return;
+
+    const prev = messages[messages.length - 2];
+    const userText = prev?.role === "user" ? prev.content : "";
+    const assistantText = last.content;
+
+    const ctrl = new AbortController();
+    chipsAbortRef.current?.abort();
+    chipsAbortRef.current = ctrl;
+    setChipsLoading(true);
+
+    const sys = `You generate short "next action" suggestion chips for the TIVO Dev Agent UI.
+Rules:
+- Output ONLY a JSON array of 4-6 strings, no prose, no markdown fences.
+- Each chip is a concrete NEXT step the admin might want after reading the assistant reply.
+- Chips MUST NOT restate, summarize, or repeat the assistant's answer.
+- Each chip is a single short line (max ~48 chars), imperative voice, admin's language (Bangla if the conversation is Bangla, else English).
+- Vary categories: verify, deploy, test, extend, secure, document, rollback, ask follow-up.
+- Do not include emoji-only chips or generic filler like "Thanks".`;
+
+    const usr = `Recent user message:\n${(userText || "").slice(-800)}\n\nAssistant reply:\n${assistantText.slice(-1600)}\n\nReturn the JSON array of next-step chips now.`;
+
+    (async () => {
+      try {
+        const res = await fetch(`${BACKEND}/functions/v1/ai-engine/chat`, {
+          method: "POST",
+          headers: { "Content-Type": "application/json", "x-master-secret": session.masterSecret },
+          body: JSON.stringify({
+            messages: [
+              { role: "system", content: sys },
+              { role: "user", content: usr },
+            ],
+            stream: false,
+          }),
+          signal: ctrl.signal,
+        });
+        if (!res.ok) throw new Error("chips " + res.status);
+        const data = await res.json();
+        const raw =
+          data?.choices?.[0]?.message?.content ??
+          data?.content ??
+          data?.message ??
+          "";
+        const jsonMatch = String(raw).match(/\[[\s\S]*\]/);
+        const parsed = jsonMatch ? JSON.parse(jsonMatch[0]) : [];
+        if (Array.isArray(parsed)) {
+          const clean = parsed
+            .filter((s: any) => typeof s === "string")
+            .map((s: string) => s.trim())
+            .filter(Boolean)
+            .slice(0, 8);
+          setChips(clean);
+        }
+      } catch {
+        /* silent — chips are optional */
+      } finally {
+        setChipsLoading(false);
+      }
+    })();
+
+    return () => ctrl.abort();
+  }, [streaming, messages, session]);
+
+  function handleChipPick(text: string) {
+    setInput((prev) => (prev ? prev + "\n\n" + text : text));
+  }
+
   return (
     <div className="flex flex-col h-full min-h-0 flex-1">
       <div ref={scrollRef} className="flex-1 min-h-0 overflow-y-auto px-3 sm:px-6 py-4 space-y-5 max-w-3xl w-full mx-auto">
@@ -593,6 +670,12 @@ export default function ChatScreen() {
       </div>
 
       <div className="max-w-3xl w-full mx-auto shrink-0">
+        <SuggestionChips
+          chips={chips}
+          loading={chipsLoading}
+          onPick={handleChipPick}
+          onDismiss={() => setChips([])}
+        />
         <ChatInput
           value={input}
           onChange={setInput}
