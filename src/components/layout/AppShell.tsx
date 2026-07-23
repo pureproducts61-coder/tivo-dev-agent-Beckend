@@ -11,12 +11,12 @@ import { Petals } from "./Petals";
 
 // Single source of truth — no duplicate "Tools" section.
 // Legacy Dashboard / Debug / AI Workspace are reachable from the Settings gear.
+// "System" removed — reachable from the Settings (⚙️) gear only.
 const NAV_PRIMARY = [
   { to: "/super-admin/app/chats", icon: MessageSquare, label: "Chat" },
   { to: "/super-admin/app/approvals", icon: CheckSquare, label: "Approvals" },
   { to: "/super-admin/app/projects", icon: FolderKanban, label: "Projects" },
   { to: "/super-admin/app/users", icon: Users, label: "Users" },
-  { to: "/super-admin/app/system", icon: Cog, label: "System" },
 ];
 
 function SidebarItem({ to, icon: Icon, label, collapsed }: any) {
