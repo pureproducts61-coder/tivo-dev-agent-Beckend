@@ -119,7 +119,8 @@ export function SettingsSheet({ open, onClose }: { open: boolean; onClose: () =>
           {/* Tools (moved out of hamburger to avoid duplicates) */}
           <section className="rounded-xl border border-zinc-800 p-3 space-y-2">
             <div className="text-xs text-zinc-400">Tools</div>
-            <div className="grid grid-cols-3 gap-2 text-[11px]">
+            <div className="grid grid-cols-2 gap-2 text-[11px]">
+              <Link onClick={onClose} to="/super-admin/app/system" className="py-2 rounded-lg bg-zinc-900 border border-zinc-800 text-center hover:border-amber-700">⚙️ System</Link>
               <Link onClick={onClose} to="/super-admin/workspace" className="py-2 rounded-lg bg-zinc-900 border border-zinc-800 text-center hover:border-amber-700">🤖 AI Workspace</Link>
               <Link onClick={onClose} to="/super-admin/dashboard" className="py-2 rounded-lg bg-zinc-900 border border-zinc-800 text-center hover:border-amber-700">📊 Dashboard</Link>
               <Link onClick={onClose} to="/super-admin/debug" className="py-2 rounded-lg bg-zinc-900 border border-zinc-800 text-center hover:border-amber-700">🔧 Debug</Link>
