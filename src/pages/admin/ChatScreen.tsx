@@ -4,6 +4,7 @@ import { ChatMessage, ChatMsg, Artifact, validateArtifact } from "@/components/c
 import { ChatInput, ActionIcons } from "@/components/chat/ChatInput";
 import { SecurityScanPanel } from "@/components/chat/SecurityScanPanel";
 import { VariablesPanel } from "@/components/admin/VariablesPanel";
+import { SuggestionChips } from "@/components/chat/SuggestionChips";
 import { supabase } from "@/integrations/supabase/client";
 import { logAudit } from "@/lib/audit";
 
