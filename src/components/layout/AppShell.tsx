@@ -1,8 +1,8 @@
 import { ReactNode, useState } from "react";
 import { NavLink, Outlet, useNavigate } from "react-router-dom";
 import {
-  MessageSquare, FolderKanban, Users, Cog, CheckSquare,
-  Bell, Settings as SettingsIcon, Menu, LogOut, PanelLeftClose, PanelLeft,
+  MessageSquare, FolderKanban, Users, CheckSquare,
+  Bell, Settings as SettingsIcon, Menu, LogOut, PanelLeftClose, PanelLeft, Trash2,
 } from "lucide-react";
 import { useSuperAdmin } from "@/contexts/SuperAdminContext";
 import { useAlerts } from "@/hooks/useAlerts";
