@@ -50,6 +50,32 @@ export function useAlerts() {
     } catch {}
   }, [session]);
 
+  const deleteAlert = useCallback(async (id: string) => {
+    setAlerts((prev) => prev.filter((a) => a.id !== id));
+    setUnread((n) => Math.max(0, n - 1));
+    if (!session) return;
+    try {
+      await fetch(`${BACKEND}/functions/v1/backend-api/notifications/delete`, {
+        method: "POST",
+        headers: { "x-master-secret": session.masterSecret, "Content-Type": "application/json" },
+        body: JSON.stringify({ id }),
+      });
+    } catch {}
+  }, [session]);
+
+  const deleteAll = useCallback(async () => {
+    setAlerts([]);
+    setUnread(0);
+    if (!session) return;
+    try {
+      await fetch(`${BACKEND}/functions/v1/backend-api/notifications/delete-all`, {
+        method: "POST",
+        headers: { "x-master-secret": session.masterSecret, "Content-Type": "application/json" },
+        body: "{}",
+      });
+    } catch {}
+  }, [session]);
+
   useEffect(() => {
     if (!session) return;
     fetchAlerts();
@@ -59,5 +85,5 @@ export function useAlerts() {
     };
   }, [session, fetchAlerts]);
 
-  return { alerts, unreadCount, markAllRead, refresh: fetchAlerts };
+  return { alerts, unreadCount, markAllRead, deleteAlert, deleteAll, refresh: fetchAlerts };
 }
