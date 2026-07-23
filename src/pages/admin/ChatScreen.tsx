@@ -670,6 +670,12 @@ Rules:
       </div>
 
       <div className="max-w-3xl w-full mx-auto shrink-0">
+        <SuggestionChips
+          chips={chips}
+          loading={chipsLoading}
+          onPick={handleChipPick}
+          onDismiss={() => setChips([])}
+        />
         <ChatInput
           value={input}
           onChange={setInput}
