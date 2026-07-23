@@ -816,6 +816,25 @@ serve(async (req) => {
       if (error) return jsonResponse((console.error("[db_error]", error), { error: "Database operation failed" }), 500);
       return jsonResponse({ success: true });
     }
+    if (action === "notifications/delete" && req.method === "POST") {
+      if (!supabase) return jsonResponse({ error: "DB unavailable" }, 503);
+      const { id } = body;
+      if (!id || typeof id !== "string") return jsonResponse({ error: "id required" }, 400);
+      let q = supabase.from("notifications").delete().eq("id", id);
+      if (!isSA) q = q.eq("tenant_id", T);
+      const { error } = await q;
+      if (error) return jsonResponse((console.error("[db_error]", error), { error: "Database operation failed" }), 500);
+      return jsonResponse({ success: true });
+    }
+    if (action === "notifications/delete-all" && req.method === "POST") {
+      if (!supabase) return jsonResponse({ error: "DB unavailable" }, 503);
+      let q = supabase.from("notifications").delete();
+      if (!isSA) q = q.eq("tenant_id", T);
+      else q = q.not("id", "is", null);
+      const { error } = await q;
+      if (error) return jsonResponse((console.error("[db_error]", error), { error: "Database operation failed" }), 500);
+      return jsonResponse({ success: true });
+    }
 
     // --- USERS (Super Admin only) ---
     if (action === "users/list" && req.method === "GET") {
