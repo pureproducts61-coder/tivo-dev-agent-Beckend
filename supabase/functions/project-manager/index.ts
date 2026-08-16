@@ -353,11 +353,11 @@ serve(async (req) => {
       const history = (project?.version_history as any[]) || [];
       history.push({ version: history.length + 1, timestamp: new Date().toISOString(), note: `Uploaded ${files.length} files` });
 
-      await supabase.from("projects").update({
+      await scope(supabase.from("projects").update({
         files: newFiles,
         build_status: "files_uploaded",
         version_history: history.slice(-50),
-      }).eq("id", project_id).eq("tenant_id", tenantId);
+      }).eq("id", project_id));
 
       return jsonResponse({ success: true, uploads: results });
     }
@@ -366,17 +366,23 @@ serve(async (req) => {
     if (action === "publish" && req.method === "POST") {
       const { project_id } = body;
       if (!project_id) return jsonResponse({ error: "project_id required" }, 400);
-      const { data: signed } = await supabase.storage.from("project-files").createSignedUrl(`${project_id}/index.html`, 60 * 60 * 24 * 365);
+      // Ownership check BEFORE creating any signed URL (service-role client bypasses RLS).
+      if (!(await assertOwnedProject(project_id))) {
+        return jsonResponse({ error: "Project not found" }, 404);
+      }
+      // Short-lived signed URL instead of a 1-year link.
+      const { data: signed } = await supabase.storage.from("project-files").createSignedUrl(`${project_id}/index.html`, 60 * 60);
       const publicUrl = signed?.signedUrl || null;
       const installerUrl = `${Deno.env.get("SUPABASE_URL")}/functions/v1/project-manager/download?id=${project_id}&format=zip`;
-      await supabase.from("projects").update({
+      await scope(supabase.from("projects").update({
         status: "published",
         build_status: "live",
         public_url: publicUrl,
         installer_url: installerUrl,
-      }).eq("id", project_id).eq("tenant_id", tenantId);
+      }).eq("id", project_id));
       return jsonResponse({ success: true, public_url: publicUrl, installer_url: installerUrl });
     }
+
 
     // === DOWNLOAD PROJECT (Ready-to-Run Bundle) ===
     if (action === "download" && req.method === "GET") {
