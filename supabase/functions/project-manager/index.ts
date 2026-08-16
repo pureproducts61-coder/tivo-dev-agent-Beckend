@@ -250,7 +250,7 @@ serve(async (req) => {
       if (!id) return jsonResponse({ error: "id required" }, 400);
 
       // Verify ownership BEFORE any storage write (prevents cross-tenant overwrite/defacement)
-      const { data: owned } = await supabase.from("projects").select("id, version_history, files").eq("id", id).eq("tenant_id", tenantId).maybeSingle();
+      const { data: owned } = await scope(supabase.from("projects").select("id, version_history, files").eq("id", id)).maybeSingle();
       if (!owned) return jsonResponse({ error: "Project not found" }, 404);
 
       // Save version before update if files changed
@@ -279,7 +279,7 @@ serve(async (req) => {
         }
       }
 
-      const { error } = await supabase.from("projects").update(updates).eq("id", id).eq("tenant_id", tenantId);
+      const { error } = await scope(supabase.from("projects").update(updates).eq("id", id));
       if (error) return jsonResponse((console.error("[db_error]", error), { error: "Database operation failed" }), 500);
       return jsonResponse({ success: true });
     }
@@ -290,7 +290,7 @@ serve(async (req) => {
       if (!id) return jsonResponse({ error: "id required" }, 400);
 
       // Verify ownership BEFORE storage cleanup (prevents cross-tenant file deletion)
-      const { data: owned } = await supabase.from("projects").select("id").eq("id", id).eq("tenant_id", tenantId).maybeSingle();
+      const { data: owned } = await scope(supabase.from("projects").select("id").eq("id", id)).maybeSingle();
       if (!owned) return jsonResponse({ error: "Project not found" }, 404);
 
       // Recursively delete storage files
@@ -305,7 +305,7 @@ serve(async (req) => {
       }
       await deleteFolder(id);
 
-      const { error } = await supabase.from("projects").delete().eq("id", id).eq("tenant_id", tenantId);
+      const { error } = await scope(supabase.from("projects").delete().eq("id", id));
       if (error) return jsonResponse((console.error("[db_error]", error), { error: "Database operation failed" }), 500);
       return jsonResponse({ success: true });
     }
@@ -340,7 +340,7 @@ serve(async (req) => {
       }
 
       // Update project files metadata + version
-      const { data: project } = await supabase.from("projects").select("files, version_history").eq("id", project_id).eq("tenant_id", tenantId).single();
+      const { data: project } = await scope(supabase.from("projects").select("files, version_history").eq("id", project_id)).single();
       const existingFiles = (project?.files as any[]) || [];
       const newFiles = [...existingFiles];
       for (const r of results) {
@@ -383,7 +383,7 @@ serve(async (req) => {
       const id = url.searchParams.get("id");
       if (!id) return jsonResponse({ error: "id required" }, 400);
 
-      const { data: project } = await supabase.from("projects").select("*").eq("id", id).eq("tenant_id", tenantId).single();
+      const { data: project } = await scope(supabase.from("projects").select("*").eq("id", id)).single();
       if (!project) return jsonResponse({ error: "Project not found" }, 404);
 
       // Get files from storage
@@ -418,7 +418,7 @@ serve(async (req) => {
     if (action === "public-url" && req.method === "GET") {
       const id = url.searchParams.get("id");
       if (!id) return jsonResponse({ error: "id required" }, 400);
-      const { data } = await supabase.from("projects").select("public_url, installer_url, status, build_status, build_metadata").eq("id", id).eq("tenant_id", tenantId).single();
+      const { data } = await scope(supabase.from("projects").select("public_url, installer_url, status, build_status, build_metadata").eq("id", id)).single();
       if (!data) return jsonResponse({ error: "Project not found" }, 404);
       return jsonResponse(data);
     }
