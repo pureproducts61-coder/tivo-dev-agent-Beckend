@@ -101,9 +101,42 @@ serve(async (req) => {
       if (s === Deno.env.get("SUPER_ADMIN_MASTER_SECRET")) return "super_admin";
       return null;
     }
-    const tenantId = resolveTenant(providedSecret);
+
+    // Verify a Supabase user JWT server-side (never trust client-supplied identity).
+    // Accepted either via `Authorization: Bearer <jwt>` or as the x-master-secret value
+    // when that value is a JWT (session-token mode — keeps raw secrets out of browsers).
+    const LOCKED_SUPER_ADMIN_EMAIL = "pureproducts61@gmail.com";
+    const looksLikeJwt = (v: string | null) => !!v && v.split(".").length === 3 && v.length > 60;
+    async function verifyUserJwt(token: string | null): Promise<{ id: string; email: string } | null> {
+      if (!looksLikeJwt(token)) return null;
+      const supaUrl = Deno.env.get("SUPABASE_URL");
+      const supaAnon = Deno.env.get("SUPABASE_ANON_KEY") || Deno.env.get("SUPABASE_PUBLISHABLE_KEY");
+      if (!supaUrl || !supaAnon) return null;
+      try {
+        const c = createClient(supaUrl, supaAnon);
+        const { data, error } = await c.auth.getUser(token!);
+        if (error || !data?.user) return null;
+        return { id: data.user.id, email: (data.user.email || "").trim().toLowerCase() };
+      } catch { return null; }
+    }
+
+    const bearer = (req.headers.get("authorization") || "").replace(/^Bearer\s+/i, "").trim() || null;
+    // A verified user identity gives us user-level authorization on top of tenant isolation.
+    const verifiedUser =
+      (await verifyUserJwt(bearer)) ??
+      (looksLikeJwt(providedSecret) ? await verifyUserJwt(providedSecret) : null);
+
+    let tenantId = resolveTenant(providedSecret);
+    // Session-token mode: super admin authenticates with their verified Supabase JWT,
+    // so the raw master secret never has to reach the browser.
+    if (!tenantId && verifiedUser?.email === LOCKED_SUPER_ADMIN_EMAIL) tenantId = "super_admin";
     if (!tenantId) return jsonResponse({ error: "Unauthorized" }, 401);
     const isSuperAdmin = tenantId === "super_admin";
+
+    // Optional hard requirement: every non-super-admin caller must present a verified user JWT.
+    if (!isSuperAdmin && Deno.env.get("REQUIRE_USER_JWT") === "true" && !verifiedUser) {
+      return jsonResponse({ error: "Unauthorized — verified user session required" }, 401);
+    }
 
     let supabase: any;
     try {
@@ -113,8 +146,21 @@ serve(async (req) => {
       return jsonResponse({ error: "Database not available", alert: "ADMIN_CONNECTION_ERROR" }, 503);
     }
 
-    // Helper: scope query to current tenant unless super admin
-    const scope = (q: any) => isSuperAdmin ? q : q.eq("tenant_id", tenantId);
+    // Helper: scope query to current tenant unless super admin.
+    // When the caller proved a user identity, also scope to that user (user-level authorization).
+    const scope = (q: any) => {
+      if (isSuperAdmin) return q;
+      let out = q.eq("tenant_id", tenantId);
+      if (verifiedUser) out = out.eq("user_id", verifiedUser.id);
+      return out;
+    };
+
+    // Ownership guard used before any privileged (service-role) side effect on a project.
+    async function assertOwnedProject(projectId: string): Promise<boolean> {
+      if (!projectId) return false;
+      const { data } = await scope(supabase.from("projects").select("id").eq("id", projectId)).maybeSingle();
+      return !!data;
+    }
 
     const url = new URL(req.url);
     const pathParts = url.pathname.split("/").filter(Boolean);
@@ -126,8 +172,9 @@ serve(async (req) => {
       const status = url.searchParams.get("status");
       let query = supabase.from("projects").select("id, name, description, status, build_status, public_url, installer_url, created_at, updated_at, build_metadata, version_history, tenant_id").order("updated_at", { ascending: false });
       query = scope(query);
-      if (user_id) query = query.eq("user_id", user_id);
+      if (user_id && (isSuperAdmin || !verifiedUser)) query = query.eq("user_id", user_id);
       if (status) query = query.eq("status", status);
+
       const { data, error } = await query;
       if (error) return jsonResponse((console.error("[db_error]", error), { error: "Database operation failed" }), 500);
       return jsonResponse({ projects: data, tenant_id: tenantId });
@@ -203,7 +250,7 @@ serve(async (req) => {
       if (!id) return jsonResponse({ error: "id required" }, 400);
 
       // Verify ownership BEFORE any storage write (prevents cross-tenant overwrite/defacement)
-      const { data: owned } = await supabase.from("projects").select("id, version_history, files").eq("id", id).eq("tenant_id", tenantId).maybeSingle();
+      const { data: owned } = await scope(supabase.from("projects").select("id, version_history, files").eq("id", id)).maybeSingle();
       if (!owned) return jsonResponse({ error: "Project not found" }, 404);
 
       // Save version before update if files changed
@@ -232,7 +279,7 @@ serve(async (req) => {
         }
       }
 
-      const { error } = await supabase.from("projects").update(updates).eq("id", id).eq("tenant_id", tenantId);
+      const { error } = await scope(supabase.from("projects").update(updates).eq("id", id));
       if (error) return jsonResponse((console.error("[db_error]", error), { error: "Database operation failed" }), 500);
       return jsonResponse({ success: true });
     }
@@ -243,7 +290,7 @@ serve(async (req) => {
       if (!id) return jsonResponse({ error: "id required" }, 400);
 
       // Verify ownership BEFORE storage cleanup (prevents cross-tenant file deletion)
-      const { data: owned } = await supabase.from("projects").select("id").eq("id", id).eq("tenant_id", tenantId).maybeSingle();
+      const { data: owned } = await scope(supabase.from("projects").select("id").eq("id", id)).maybeSingle();
       if (!owned) return jsonResponse({ error: "Project not found" }, 404);
 
       // Recursively delete storage files
@@ -258,7 +305,7 @@ serve(async (req) => {
       }
       await deleteFolder(id);
 
-      const { error } = await supabase.from("projects").delete().eq("id", id).eq("tenant_id", tenantId);
+      const { error } = await scope(supabase.from("projects").delete().eq("id", id));
       if (error) return jsonResponse((console.error("[db_error]", error), { error: "Database operation failed" }), 500);
       return jsonResponse({ success: true });
     }
@@ -293,7 +340,7 @@ serve(async (req) => {
       }
 
       // Update project files metadata + version
-      const { data: project } = await supabase.from("projects").select("files, version_history").eq("id", project_id).eq("tenant_id", tenantId).single();
+      const { data: project } = await scope(supabase.from("projects").select("files, version_history").eq("id", project_id)).single();
       const existingFiles = (project?.files as any[]) || [];
       const newFiles = [...existingFiles];
       for (const r of results) {
@@ -306,11 +353,11 @@ serve(async (req) => {
       const history = (project?.version_history as any[]) || [];
       history.push({ version: history.length + 1, timestamp: new Date().toISOString(), note: `Uploaded ${files.length} files` });
 
-      await supabase.from("projects").update({
+      await scope(supabase.from("projects").update({
         files: newFiles,
         build_status: "files_uploaded",
         version_history: history.slice(-50),
-      }).eq("id", project_id).eq("tenant_id", tenantId);
+      }).eq("id", project_id));
 
       return jsonResponse({ success: true, uploads: results });
     }
@@ -319,24 +366,30 @@ serve(async (req) => {
     if (action === "publish" && req.method === "POST") {
       const { project_id } = body;
       if (!project_id) return jsonResponse({ error: "project_id required" }, 400);
-      const { data: signed } = await supabase.storage.from("project-files").createSignedUrl(`${project_id}/index.html`, 60 * 60 * 24 * 365);
+      // Ownership check BEFORE creating any signed URL (service-role client bypasses RLS).
+      if (!(await assertOwnedProject(project_id))) {
+        return jsonResponse({ error: "Project not found" }, 404);
+      }
+      // Short-lived signed URL instead of a 1-year link.
+      const { data: signed } = await supabase.storage.from("project-files").createSignedUrl(`${project_id}/index.html`, 60 * 60);
       const publicUrl = signed?.signedUrl || null;
       const installerUrl = `${Deno.env.get("SUPABASE_URL")}/functions/v1/project-manager/download?id=${project_id}&format=zip`;
-      await supabase.from("projects").update({
+      await scope(supabase.from("projects").update({
         status: "published",
         build_status: "live",
         public_url: publicUrl,
         installer_url: installerUrl,
-      }).eq("id", project_id).eq("tenant_id", tenantId);
+      }).eq("id", project_id));
       return jsonResponse({ success: true, public_url: publicUrl, installer_url: installerUrl });
     }
+
 
     // === DOWNLOAD PROJECT (Ready-to-Run Bundle) ===
     if (action === "download" && req.method === "GET") {
       const id = url.searchParams.get("id");
       if (!id) return jsonResponse({ error: "id required" }, 400);
 
-      const { data: project } = await supabase.from("projects").select("*").eq("id", id).eq("tenant_id", tenantId).single();
+      const { data: project } = await scope(supabase.from("projects").select("*").eq("id", id)).single();
       if (!project) return jsonResponse({ error: "Project not found" }, 404);
 
       // Get files from storage
@@ -371,7 +424,7 @@ serve(async (req) => {
     if (action === "public-url" && req.method === "GET") {
       const id = url.searchParams.get("id");
       if (!id) return jsonResponse({ error: "id required" }, 400);
-      const { data } = await supabase.from("projects").select("public_url, installer_url, status, build_status, build_metadata").eq("id", id).eq("tenant_id", tenantId).single();
+      const { data } = await scope(supabase.from("projects").select("public_url, installer_url, status, build_status, build_metadata").eq("id", id)).single();
       if (!data) return jsonResponse({ error: "Project not found" }, 404);
       return jsonResponse(data);
     }

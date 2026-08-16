@@ -305,8 +305,64 @@ const CAPABILITY_MAP = {
   },
 };
 
+// === RATE LIMITING (same pattern as ai-engine / sandbox) ===
+const rateLimitStore = new Map<string, { count: number; resetAt: number }>();
+const WINDOW_MS = 60_000;
+
+function checkRateLimit(key: string, maxRequests: number): { allowed: boolean; retryAfterMs?: number } {
+  const now = Date.now();
+  const entry = rateLimitStore.get(key);
+  if (!entry || now > entry.resetAt) {
+    rateLimitStore.set(key, { count: 1, resetAt: now + WINDOW_MS });
+    return { allowed: true };
+  }
+  if (entry.count >= maxRequests) return { allowed: false, retryAfterMs: entry.resetAt - now };
+  entry.count++;
+  return { allowed: true };
+}
+
+// Progressive back-off on failed authentication attempts per IP.
+const authFailures = new Map<string, { count: number; blockedUntil: number }>();
+function authBackoffCheck(ip: string): number {
+  const f = authFailures.get(ip);
+  if (!f) return 0;
+  const remaining = f.blockedUntil - Date.now();
+  return remaining > 0 ? remaining : 0;
+}
+function recordAuthFailure(ip: string) {
+  const f = authFailures.get(ip) || { count: 0, blockedUntil: 0 };
+  f.count++;
+  // 3 strikes → exponential lockout capped at 15 minutes
+  if (f.count >= 3) {
+    const backoff = Math.min(2 ** (f.count - 2) * 1000, 15 * 60_000);
+    f.blockedUntil = Date.now() + backoff;
+  }
+  authFailures.set(ip, f);
+}
+function clearAuthFailures(ip: string) { authFailures.delete(ip); }
+
+const LOCKED_SUPER_ADMIN_EMAIL_CONST = "pureproducts61@gmail.com";
+const looksLikeJwt = (v: string | null) => !!v && v.split(".").length === 3 && v.length > 60;
+
+// Verify a Supabase user JWT server-side. Lets the browser authenticate with a
+// short-lived session token instead of carrying the raw MASTER_SECRET.
+async function verifyUserJwt(token: string | null): Promise<{ id: string; email: string } | null> {
+  if (!looksLikeJwt(token)) return null;
+  const supaUrl = Deno.env.get("SUPABASE_URL");
+  const supaAnon = Deno.env.get("SUPABASE_ANON_KEY") || Deno.env.get("SUPABASE_PUBLISHABLE_KEY");
+  if (!supaUrl || !supaAnon) return null;
+  try {
+    const c = createClient(supaUrl, supaAnon);
+    const { data, error } = await c.auth.getUser(token!);
+    if (error || !data?.user) return null;
+    return { id: data.user.id, email: (data.user.email || "").trim().toLowerCase() };
+  } catch { return null; }
+}
+
 serve(async (req) => {
   if (req.method === "OPTIONS") return new Response(null, { headers: corsHeaders });
+
+  const clientIP = req.headers.get("x-forwarded-for")?.split(",")[0]?.trim() || "unknown";
 
   try {
     const url = new URL(req.url);
@@ -315,6 +371,20 @@ serve(async (req) => {
     const action = fnIdx >= 0 && pathParts.length > fnIdx + 1
       ? pathParts.slice(fnIdx + 1).join("/")
       : pathParts[pathParts.length - 1] || "";
+
+    // Global IP rate limit (stricter on the unauthenticated login endpoint)
+    const isLoginAction = action === "super-admin-verify";
+    const rl = checkRateLimit(`${clientIP}:${isLoginAction ? "login" : "api"}`, isLoginAction ? 10 : 60);
+    if (!rl.allowed) {
+      return jsonResponse({ error: "Rate limit exceeded", retry_after_ms: rl.retryAfterMs }, 429);
+    }
+    if (isLoginAction) {
+      const blockedMs = authBackoffCheck(clientIP);
+      if (blockedMs > 0) {
+        return jsonResponse({ ok: false, error: "Too many failed attempts — try again later", retry_after_ms: blockedMs }, 429);
+      }
+    }
+
 
     // === Health (no auth, no DB required) — generic statuses only, no error message leakage ===
     if (action === "health") {
@@ -469,34 +539,48 @@ serve(async (req) => {
         // Require a verified Supabase access token; never trust caller-supplied email
         const accessToken = (b.access_token || "").trim();
         if (!accessToken) return jsonResponse({ ok: false, error: "access_token required" }, 401);
-        const supaUrl = Deno.env.get("SUPABASE_URL");
-        const supaAnon = Deno.env.get("SUPABASE_ANON_KEY") || Deno.env.get("SUPABASE_PUBLISHABLE_KEY");
-        if (!supaUrl || !supaAnon) return jsonResponse({ ok: false, error: "Auth not configured" }, 503);
-        const verifyClient = createClient(supaUrl, supaAnon);
-        const { data: userData, error: userErr } = await verifyClient.auth.getUser(accessToken);
-        if (userErr || !userData?.user?.email) {
+        const verified = await verifyUserJwt(accessToken);
+        if (!verified?.email) {
+          recordAuthFailure(clientIP);
           return jsonResponse({ ok: false, error: "Invalid session token" }, 401);
         }
-        const verifiedEmail = userData.user.email.trim().toLowerCase();
-        if (verifiedEmail !== adminEmail) {
+        if (verified.email !== adminEmail) {
+          recordAuthFailure(clientIP);
           return jsonResponse({ ok: false, error: "Email not authorized as super admin" }, 403);
         }
-        return jsonResponse({ ok: true, master_secret: adminSecret, role: "super_admin", email: verifiedEmail });
+        clearAuthFailures(clientIP);
+        // Session-token mode: hand back the caller's own (already-held) short-lived
+        // Supabase JWT as the API credential — the raw MASTER_SECRET never reaches the browser.
+        return jsonResponse({ ok: true, master_secret: accessToken, session_token: accessToken, auth_mode: "jwt", role: "super_admin", email: verified.email });
       }
       if (b.method === "secret") {
         const email = (b.email || "").trim().toLowerCase();
         if (email === adminEmail && b.secret === adminSecret) {
-          return jsonResponse({ ok: true, master_secret: adminSecret, role: "super_admin", email });
+          clearAuthFailures(clientIP);
+          // Echo back only what the caller already supplied — no new secret material issued.
+          return jsonResponse({ ok: true, master_secret: b.secret, auth_mode: "secret", role: "super_admin", email });
         }
+        recordAuthFailure(clientIP);
         return jsonResponse({ ok: false, error: "Invalid email or secret" }, 401);
       }
       return jsonResponse({ ok: false, error: "method must be 'google' or 'secret'" }, 400);
     }
 
     // === Auth required from here (Multi-tenant) ===
+    // Accepts either a tenant MASTER_SECRET or a server-verified Supabase user JWT
+    // (via x-master-secret or Authorization: Bearer) so browsers can use session tokens.
     const providedSecret = req.headers.get("x-master-secret");
-    const tenant = resolveTenant(providedSecret);
-    if (!tenant) return jsonResponse({ error: "Unauthorized — invalid master secret" }, 401);
+    const bearer = (req.headers.get("authorization") || "").replace(/^Bearer\s+/i, "").trim() || null;
+    let tenant = resolveTenant(providedSecret);
+    if (!tenant) {
+      const verified = (looksLikeJwt(providedSecret) ? await verifyUserJwt(providedSecret) : null) ?? await verifyUserJwt(bearer);
+      if (verified?.email === LOCKED_SUPER_ADMIN_EMAIL_CONST) tenant = { tenantId: "super_admin" };
+    }
+    if (!tenant) {
+      recordAuthFailure(clientIP);
+      return jsonResponse({ error: "Unauthorized" }, 401);
+    }
+
 
     const supabase = getActiveSupabase(req);
     const body = req.method !== "GET" ? await req.json().catch(() => ({})) : {};
