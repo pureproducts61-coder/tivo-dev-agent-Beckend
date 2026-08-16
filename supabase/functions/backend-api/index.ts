@@ -305,8 +305,64 @@ const CAPABILITY_MAP = {
   },
 };
 
+// === RATE LIMITING (same pattern as ai-engine / sandbox) ===
+const rateLimitStore = new Map<string, { count: number; resetAt: number }>();
+const WINDOW_MS = 60_000;
+
+function checkRateLimit(key: string, maxRequests: number): { allowed: boolean; retryAfterMs?: number } {
+  const now = Date.now();
+  const entry = rateLimitStore.get(key);
+  if (!entry || now > entry.resetAt) {
+    rateLimitStore.set(key, { count: 1, resetAt: now + WINDOW_MS });
+    return { allowed: true };
+  }
+  if (entry.count >= maxRequests) return { allowed: false, retryAfterMs: entry.resetAt - now };
+  entry.count++;
+  return { allowed: true };
+}
+
+// Progressive back-off on failed authentication attempts per IP.
+const authFailures = new Map<string, { count: number; blockedUntil: number }>();
+function authBackoffCheck(ip: string): number {
+  const f = authFailures.get(ip);
+  if (!f) return 0;
+  const remaining = f.blockedUntil - Date.now();
+  return remaining > 0 ? remaining : 0;
+}
+function recordAuthFailure(ip: string) {
+  const f = authFailures.get(ip) || { count: 0, blockedUntil: 0 };
+  f.count++;
+  // 3 strikes → exponential lockout capped at 15 minutes
+  if (f.count >= 3) {
+    const backoff = Math.min(2 ** (f.count - 2) * 1000, 15 * 60_000);
+    f.blockedUntil = Date.now() + backoff;
+  }
+  authFailures.set(ip, f);
+}
+function clearAuthFailures(ip: string) { authFailures.delete(ip); }
+
+const LOCKED_SUPER_ADMIN_EMAIL_CONST = "pureproducts61@gmail.com";
+const looksLikeJwt = (v: string | null) => !!v && v.split(".").length === 3 && v.length > 60;
+
+// Verify a Supabase user JWT server-side. Lets the browser authenticate with a
+// short-lived session token instead of carrying the raw MASTER_SECRET.
+async function verifyUserJwt(token: string | null): Promise<{ id: string; email: string } | null> {
+  if (!looksLikeJwt(token)) return null;
+  const supaUrl = Deno.env.get("SUPABASE_URL");
+  const supaAnon = Deno.env.get("SUPABASE_ANON_KEY") || Deno.env.get("SUPABASE_PUBLISHABLE_KEY");
+  if (!supaUrl || !supaAnon) return null;
+  try {
+    const c = createClient(supaUrl, supaAnon);
+    const { data, error } = await c.auth.getUser(token!);
+    if (error || !data?.user) return null;
+    return { id: data.user.id, email: (data.user.email || "").trim().toLowerCase() };
+  } catch { return null; }
+}
+
 serve(async (req) => {
   if (req.method === "OPTIONS") return new Response(null, { headers: corsHeaders });
+
+  const clientIP = req.headers.get("x-forwarded-for")?.split(",")[0]?.trim() || "unknown";
 
   try {
     const url = new URL(req.url);
@@ -315,6 +371,20 @@ serve(async (req) => {
     const action = fnIdx >= 0 && pathParts.length > fnIdx + 1
       ? pathParts.slice(fnIdx + 1).join("/")
       : pathParts[pathParts.length - 1] || "";
+
+    // Global IP rate limit (stricter on the unauthenticated login endpoint)
+    const isLoginAction = action === "super-admin-verify";
+    const rl = checkRateLimit(`${clientIP}:${isLoginAction ? "login" : "api"}`, isLoginAction ? 10 : 60);
+    if (!rl.allowed) {
+      return jsonResponse({ error: "Rate limit exceeded", retry_after_ms: rl.retryAfterMs }, 429);
+    }
+    if (isLoginAction) {
+      const blockedMs = authBackoffCheck(clientIP);
+      if (blockedMs > 0) {
+        return jsonResponse({ ok: false, error: "Too many failed attempts — try again later", retry_after_ms: blockedMs }, 429);
+      }
+    }
+
 
     // === Health (no auth, no DB required) — generic statuses only, no error message leakage ===
     if (action === "health") {
