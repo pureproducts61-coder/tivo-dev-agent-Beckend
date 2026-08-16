@@ -539,34 +539,48 @@ serve(async (req) => {
         // Require a verified Supabase access token; never trust caller-supplied email
         const accessToken = (b.access_token || "").trim();
         if (!accessToken) return jsonResponse({ ok: false, error: "access_token required" }, 401);
-        const supaUrl = Deno.env.get("SUPABASE_URL");
-        const supaAnon = Deno.env.get("SUPABASE_ANON_KEY") || Deno.env.get("SUPABASE_PUBLISHABLE_KEY");
-        if (!supaUrl || !supaAnon) return jsonResponse({ ok: false, error: "Auth not configured" }, 503);
-        const verifyClient = createClient(supaUrl, supaAnon);
-        const { data: userData, error: userErr } = await verifyClient.auth.getUser(accessToken);
-        if (userErr || !userData?.user?.email) {
+        const verified = await verifyUserJwt(accessToken);
+        if (!verified?.email) {
+          recordAuthFailure(clientIP);
           return jsonResponse({ ok: false, error: "Invalid session token" }, 401);
         }
-        const verifiedEmail = userData.user.email.trim().toLowerCase();
-        if (verifiedEmail !== adminEmail) {
+        if (verified.email !== adminEmail) {
+          recordAuthFailure(clientIP);
           return jsonResponse({ ok: false, error: "Email not authorized as super admin" }, 403);
         }
-        return jsonResponse({ ok: true, master_secret: adminSecret, role: "super_admin", email: verifiedEmail });
+        clearAuthFailures(clientIP);
+        // Session-token mode: hand back the caller's own (already-held) short-lived
+        // Supabase JWT as the API credential — the raw MASTER_SECRET never reaches the browser.
+        return jsonResponse({ ok: true, master_secret: accessToken, session_token: accessToken, auth_mode: "jwt", role: "super_admin", email: verified.email });
       }
       if (b.method === "secret") {
         const email = (b.email || "").trim().toLowerCase();
         if (email === adminEmail && b.secret === adminSecret) {
-          return jsonResponse({ ok: true, master_secret: adminSecret, role: "super_admin", email });
+          clearAuthFailures(clientIP);
+          // Echo back only what the caller already supplied — no new secret material issued.
+          return jsonResponse({ ok: true, master_secret: b.secret, auth_mode: "secret", role: "super_admin", email });
         }
+        recordAuthFailure(clientIP);
         return jsonResponse({ ok: false, error: "Invalid email or secret" }, 401);
       }
       return jsonResponse({ ok: false, error: "method must be 'google' or 'secret'" }, 400);
     }
 
     // === Auth required from here (Multi-tenant) ===
+    // Accepts either a tenant MASTER_SECRET or a server-verified Supabase user JWT
+    // (via x-master-secret or Authorization: Bearer) so browsers can use session tokens.
     const providedSecret = req.headers.get("x-master-secret");
-    const tenant = resolveTenant(providedSecret);
-    if (!tenant) return jsonResponse({ error: "Unauthorized — invalid master secret" }, 401);
+    const bearer = (req.headers.get("authorization") || "").replace(/^Bearer\s+/i, "").trim() || null;
+    let tenant = resolveTenant(providedSecret);
+    if (!tenant) {
+      const verified = (looksLikeJwt(providedSecret) ? await verifyUserJwt(providedSecret) : null) ?? await verifyUserJwt(bearer);
+      if (verified?.email === LOCKED_SUPER_ADMIN_EMAIL_CONST) tenant = { tenantId: "super_admin" };
+    }
+    if (!tenant) {
+      recordAuthFailure(clientIP);
+      return jsonResponse({ error: "Unauthorized" }, 401);
+    }
+
 
     const supabase = getActiveSupabase(req);
     const body = req.method !== "GET" ? await req.json().catch(() => ({})) : {};
