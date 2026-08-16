@@ -101,9 +101,42 @@ serve(async (req) => {
       if (s === Deno.env.get("SUPER_ADMIN_MASTER_SECRET")) return "super_admin";
       return null;
     }
-    const tenantId = resolveTenant(providedSecret);
+
+    // Verify a Supabase user JWT server-side (never trust client-supplied identity).
+    // Accepted either via `Authorization: Bearer <jwt>` or as the x-master-secret value
+    // when that value is a JWT (session-token mode — keeps raw secrets out of browsers).
+    const LOCKED_SUPER_ADMIN_EMAIL = "pureproducts61@gmail.com";
+    const looksLikeJwt = (v: string | null) => !!v && v.split(".").length === 3 && v.length > 60;
+    async function verifyUserJwt(token: string | null): Promise<{ id: string; email: string } | null> {
+      if (!looksLikeJwt(token)) return null;
+      const supaUrl = Deno.env.get("SUPABASE_URL");
+      const supaAnon = Deno.env.get("SUPABASE_ANON_KEY") || Deno.env.get("SUPABASE_PUBLISHABLE_KEY");
+      if (!supaUrl || !supaAnon) return null;
+      try {
+        const c = createClient(supaUrl, supaAnon);
+        const { data, error } = await c.auth.getUser(token!);
+        if (error || !data?.user) return null;
+        return { id: data.user.id, email: (data.user.email || "").trim().toLowerCase() };
+      } catch { return null; }
+    }
+
+    const bearer = (req.headers.get("authorization") || "").replace(/^Bearer\s+/i, "").trim() || null;
+    // A verified user identity gives us user-level authorization on top of tenant isolation.
+    const verifiedUser =
+      (await verifyUserJwt(bearer)) ??
+      (looksLikeJwt(providedSecret) ? await verifyUserJwt(providedSecret) : null);
+
+    let tenantId = resolveTenant(providedSecret);
+    // Session-token mode: super admin authenticates with their verified Supabase JWT,
+    // so the raw master secret never has to reach the browser.
+    if (!tenantId && verifiedUser?.email === LOCKED_SUPER_ADMIN_EMAIL) tenantId = "super_admin";
     if (!tenantId) return jsonResponse({ error: "Unauthorized" }, 401);
     const isSuperAdmin = tenantId === "super_admin";
+
+    // Optional hard requirement: every non-super-admin caller must present a verified user JWT.
+    if (!isSuperAdmin && Deno.env.get("REQUIRE_USER_JWT") === "true" && !verifiedUser) {
+      return jsonResponse({ error: "Unauthorized — verified user session required" }, 401);
+    }
 
     let supabase: any;
     try {
@@ -113,8 +146,21 @@ serve(async (req) => {
       return jsonResponse({ error: "Database not available", alert: "ADMIN_CONNECTION_ERROR" }, 503);
     }
 
-    // Helper: scope query to current tenant unless super admin
-    const scope = (q: any) => isSuperAdmin ? q : q.eq("tenant_id", tenantId);
+    // Helper: scope query to current tenant unless super admin.
+    // When the caller proved a user identity, also scope to that user (user-level authorization).
+    const scope = (q: any) => {
+      if (isSuperAdmin) return q;
+      let out = q.eq("tenant_id", tenantId);
+      if (verifiedUser) out = out.eq("user_id", verifiedUser.id);
+      return out;
+    };
+
+    // Ownership guard used before any privileged (service-role) side effect on a project.
+    async function assertOwnedProject(projectId: string): Promise<boolean> {
+      if (!projectId) return false;
+      const { data } = await scope(supabase.from("projects").select("id").eq("id", projectId)).maybeSingle();
+      return !!data;
+    }
 
     const url = new URL(req.url);
     const pathParts = url.pathname.split("/").filter(Boolean);
@@ -126,8 +172,9 @@ serve(async (req) => {
       const status = url.searchParams.get("status");
       let query = supabase.from("projects").select("id, name, description, status, build_status, public_url, installer_url, created_at, updated_at, build_metadata, version_history, tenant_id").order("updated_at", { ascending: false });
       query = scope(query);
-      if (user_id) query = query.eq("user_id", user_id);
+      if (user_id && (isSuperAdmin || !verifiedUser)) query = query.eq("user_id", user_id);
       if (status) query = query.eq("status", status);
+
       const { data, error } = await query;
       if (error) return jsonResponse((console.error("[db_error]", error), { error: "Database operation failed" }), 500);
       return jsonResponse({ projects: data, tenant_id: tenantId });
