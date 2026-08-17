@@ -192,27 +192,29 @@ export function SettingsSheet({ open, onClose }: { open: boolean; onClose: () =>
               <div key={p.key} className="space-y-1">
                 <div className="flex items-center justify-between">
                   <span className="text-xs text-zinc-300">{p.label}</span>
-                  {results[p.testName] === "ok" && <span className="text-green-500 text-[11px]">✓ OK</span>}
-                  {results[p.testName] === "fail" && <span className="text-red-500 text-[11px]">✕ Fail</span>}
+                  {results[p.key] === "ok" && <span className="text-green-500 text-[11px]">✓ OK</span>}
+                  {results[p.key] === "fail" && <span className="text-red-500 text-[11px]">✕ Fail</span>}
                 </div>
                 <div className="flex gap-2">
                   <input
                     type="password"
-                    value={s[p.key] as string}
+                    value={s[p.key] ?? ""}
                     placeholder={p.placeholder}
                     onChange={(e) => setS({ ...s, [p.key]: e.target.value })}
                     className="flex-1 px-2.5 py-1.5 rounded-lg bg-zinc-900 border border-zinc-800 text-xs"
                   />
                   <button
-                    disabled={testing === p.testName}
-                    onClick={() => testConnection(p.testName, s[p.key] as string)}
+                    disabled={testing === p.key}
+                    onClick={() => testConnection(p.key, s[p.key] ?? "")}
                     className="px-2.5 py-1.5 rounded-lg bg-zinc-800 text-xs disabled:opacity-50"
                   >
-                    {testing === p.testName ? "..." : "Test"}
+                    {testing === p.key ? "..." : "Test"}
                   </button>
                 </div>
+                <p className="text-[10px] text-zinc-600">{p.key} · {p.help}</p>
               </div>
             ))}
+
           </section>
         </div>
 
