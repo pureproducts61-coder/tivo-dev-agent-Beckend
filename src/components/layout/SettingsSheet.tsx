@@ -46,7 +46,7 @@ function migrate(raw: string): Settings {
     if (canonical) out[canonical] = v;
     else out[k] = v;
   }
-  return out as Settings;
+  return out as unknown as Settings;
 }
 
 
