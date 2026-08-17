@@ -1,6 +1,7 @@
 import { useEffect, useState } from "react";
 import { Link } from "react-router-dom";
 import { useSuperAdmin } from "@/contexts/SuperAdminContext";
+import { PROVIDER_REGISTRY, type CredentialKey } from "@/lib/providers";
 
 const BACKEND = import.meta.env.VITE_SUPABASE_URL;
 // Keys kept tab-scoped in sessionStorage; never persisted to localStorage.
@@ -9,38 +10,45 @@ const LEGACY_LS_KEY = "tivo_hybrid_settings";
 
 type Mode = "cloud" | "hybrid" | "local";
 
-interface Settings {
+/** Provider keys are stored under their canonical credential key (see src/lib/providers.ts). */
+type ProviderKeys = Partial<Record<CredentialKey, string>>;
+
+interface Settings extends ProviderKeys {
   mode: Mode;
-  geminiKey: string;
-  deepseekKey: string;
-  groqKey: string;
-  hfToken: string;
-  tavilyKey: string;
-  githubToken: string;
   redirectUrl: string;
   useCloudKeys: boolean;
 }
 
+/** Legacy shorthand → canonical credential key (migrates old sessionStorage blobs). */
+const LEGACY_KEY_MAP: Record<string, CredentialKey> = {
+  geminiKey: "GEMINI_API_KEY",
+  deepseekKey: "DEEPSEEK_API_KEY",
+  groqKey: "GROQ_API_KEY",
+  hfToken: "HF_INFERENCE_TOKEN",
+  tavilyKey: "TAVILY_API_KEY",
+  githubToken: "GITHUB_TOKEN",
+};
+
 const DEFAULTS: Settings = {
   mode: "hybrid",
-  geminiKey: "",
-  deepseekKey: "",
-  groqKey: "",
-  hfToken: "",
-  tavilyKey: "",
-  githubToken: "",
   redirectUrl: "app.lovable.tivo://auth",
   useCloudKeys: true,
 };
 
-const PROVIDERS: { key: keyof Settings; label: string; placeholder: string; testName: string }[] = [
-  { key: "geminiKey", label: "Gemini API Key", placeholder: "AIza...", testName: "gemini" },
-  { key: "deepseekKey", label: "DeepSeek API Key", placeholder: "sk-...", testName: "deepseek" },
-  { key: "groqKey", label: "Groq API Key", placeholder: "gsk_...", testName: "groq" },
-  { key: "hfToken", label: "Hugging Face Token", placeholder: "hf_...", testName: "hf" },
-  { key: "tavilyKey", label: "Tavily Search Key", placeholder: "tvly-...", testName: "tavily" },
-  { key: "githubToken", label: "GitHub Token", placeholder: "ghp_...", testName: "github" },
-];
+/** Only user-suppliable providers are editable here; LOVABLE_API_KEY is cloud-managed. */
+const PROVIDERS = PROVIDER_REGISTRY.filter((p) => p.key !== "LOVABLE_API_KEY");
+
+function migrate(raw: string): Settings {
+  const parsed = JSON.parse(raw) as Record<string, unknown>;
+  const out: Record<string, unknown> = { ...DEFAULTS };
+  for (const [k, v] of Object.entries(parsed)) {
+    const canonical = LEGACY_KEY_MAP[k];
+    if (canonical) out[canonical] = v;
+    else out[k] = v;
+  }
+  return out as unknown as Settings;
+}
+
 
 export function SettingsSheet({ open, onClose }: { open: boolean; onClose: () => void }) {
   const { session } = useSuperAdmin();
@@ -60,7 +68,7 @@ export function SettingsSheet({ open, onClose }: { open: boolean; onClose: () =>
           raw = legacy;
         }
       }
-      if (raw) setS({ ...DEFAULTS, ...JSON.parse(raw) });
+      if (raw) setS(migrate(raw));
     } catch {}
   }, [open]);
 
@@ -184,27 +192,29 @@ export function SettingsSheet({ open, onClose }: { open: boolean; onClose: () =>
               <div key={p.key} className="space-y-1">
                 <div className="flex items-center justify-between">
                   <span className="text-xs text-zinc-300">{p.label}</span>
-                  {results[p.testName] === "ok" && <span className="text-green-500 text-[11px]">✓ OK</span>}
-                  {results[p.testName] === "fail" && <span className="text-red-500 text-[11px]">✕ Fail</span>}
+                  {results[p.key] === "ok" && <span className="text-green-500 text-[11px]">✓ OK</span>}
+                  {results[p.key] === "fail" && <span className="text-red-500 text-[11px]">✕ Fail</span>}
                 </div>
                 <div className="flex gap-2">
                   <input
                     type="password"
-                    value={s[p.key] as string}
+                    value={s[p.key] ?? ""}
                     placeholder={p.placeholder}
                     onChange={(e) => setS({ ...s, [p.key]: e.target.value })}
                     className="flex-1 px-2.5 py-1.5 rounded-lg bg-zinc-900 border border-zinc-800 text-xs"
                   />
                   <button
-                    disabled={testing === p.testName}
-                    onClick={() => testConnection(p.testName, s[p.key] as string)}
+                    disabled={testing === p.key}
+                    onClick={() => testConnection(p.key, s[p.key] ?? "")}
                     className="px-2.5 py-1.5 rounded-lg bg-zinc-800 text-xs disabled:opacity-50"
                   >
-                    {testing === p.testName ? "..." : "Test"}
+                    {testing === p.key ? "..." : "Test"}
                   </button>
                 </div>
+                <p className="text-[10px] text-zinc-600">{p.key} · {p.help}</p>
               </div>
             ))}
+
           </section>
         </div>
 

@@ -430,6 +430,66 @@ export type Database = {
           },
         ]
       }
+      model_registry: {
+        Row: {
+          checksum: string | null
+          created_at: string
+          download_url: string | null
+          format: string | null
+          id: string
+          is_active: boolean
+          metadata: Json
+          name: string
+          provider: string
+          required_ram_mb: number | null
+          size_bytes: number | null
+          source_kind: string
+          status: string
+          storage_path: string | null
+          supported_runtimes: string[]
+          tenant_id: string
+          updated_at: string
+        }
+        Insert: {
+          checksum?: string | null
+          created_at?: string
+          download_url?: string | null
+          format?: string | null
+          id?: string
+          is_active?: boolean
+          metadata?: Json
+          name: string
+          provider: string
+          required_ram_mb?: number | null
+          size_bytes?: number | null
+          source_kind?: string
+          status?: string
+          storage_path?: string | null
+          supported_runtimes?: string[]
+          tenant_id?: string
+          updated_at?: string
+        }
+        Update: {
+          checksum?: string | null
+          created_at?: string
+          download_url?: string | null
+          format?: string | null
+          id?: string
+          is_active?: boolean
+          metadata?: Json
+          name?: string
+          provider?: string
+          required_ram_mb?: number | null
+          size_bytes?: number | null
+          source_kind?: string
+          status?: string
+          storage_path?: string | null
+          supported_runtimes?: string[]
+          tenant_id?: string
+          updated_at?: string
+        }
+        Relationships: []
+      }
       notifications: {
         Row: {
           created_at: string
