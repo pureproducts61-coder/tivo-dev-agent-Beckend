@@ -68,7 +68,7 @@ export function SettingsSheet({ open, onClose }: { open: boolean; onClose: () =>
           raw = legacy;
         }
       }
-      if (raw) setS({ ...DEFAULTS, ...JSON.parse(raw) });
+      if (raw) setS(migrate(raw));
     } catch {}
   }, [open]);
 
