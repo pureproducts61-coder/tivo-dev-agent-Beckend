@@ -741,9 +741,11 @@ Generate 15-40 files. Complete code, no TODOs. TypeScript strict.`,
       projectData.files.push({ path: "setup.sh", content: installers["setup.sh"] });
       projectData.files.push({ path: "install.bat", content: installers["install.bat"] });
 
-      // Save to DB
+      // Save to DB (owner comes from the verified session, not the request body)
+      const fsOwnerUserId = resolveOwnerUserId(user_id);
+      if (!fsOwnerUserId) return jsonResponse({ error: "Unauthorized — verified user session required" }, 401);
       const { data: saved } = await supabase.from("projects").insert({
-        user_id: user_id || "system",
+        user_id: fsOwnerUserId,
         tenant_id: tenantId === "super_admin" ? "tenant_main" : tenantId,
         name: projectName,
         description,
