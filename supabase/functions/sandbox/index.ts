@@ -299,8 +299,10 @@ serve(async (req) => {
       files.push({ path: "setup.sh", content: `#!/bin/bash\nnpm install\nnpm run dev || npm start` });
       files.push({ path: "install.bat", content: `@echo off\ncall npm install\ncall npm run dev || call npm start\npause` });
 
+      const factoryOwnerUserId = resolveOwnerUserId(user_id);
+      if (!factoryOwnerUserId) return jsonResponse({ error: "Unauthorized — verified user session required" }, 401);
       const { data: saved } = await supabase.from("projects").insert({
-        user_id: user_id || "system", name: project.project_name || "factory-project", description, files, status: "active", build_status: "live",
+        user_id: factoryOwnerUserId, name: project.project_name || "factory-project", description, files, status: "active", build_status: "live",
         build_metadata: { pipeline },
         version_history: [{ version: 1, timestamp: new Date().toISOString(), note: "Factory build" }],
       }).select().single();
