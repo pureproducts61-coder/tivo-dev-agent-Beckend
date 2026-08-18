@@ -240,6 +240,25 @@ async function callAI(messages: any[], stream = false, model = "google/gemini-3-
   return data.choices?.[0]?.message?.content || "";
 }
 
+/**
+ * Streaming entry point for routes: always resolves to a Response whose body is
+ * an SSE stream. If every provider fails, the failure is streamed as visible
+ * text so the chat never stays silently empty.
+ */
+async function streamOrErrorSse(messages: any[], model?: string): Promise<Response> {
+  const m = model || "google/gemini-3-flash-preview";
+  try {
+    const r = await callAI(messages, true, m);
+    if (r instanceof Response) return r;
+    return textAsSseResponse(typeof r === "string" ? r : JSON.stringify(r), m);
+  } catch (e) {
+    const msg = e instanceof Error ? e.message : "AI request failed";
+    return textAsSseResponse(`❌ AI provider unavailable: ${msg}`, m);
+  }
+}
+
+
+
 
 function parseJsonFromAI(result: string) {
   try {
