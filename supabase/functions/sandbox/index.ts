@@ -78,6 +78,23 @@ function parseJsonFromAI(result: string) {
   } catch { return null; }
 }
 
+// === Verified user identity helpers ===
+const LOCKED_SUPER_ADMIN_EMAIL = "pureproducts61@gmail.com";
+const looksLikeJwt = (v: string | null) => !!v && v.split(".").length === 3 && v.length > 60;
+async function verifyUserJwt(token: string | null): Promise<{ id: string; email: string } | null> {
+  if (!looksLikeJwt(token)) return null;
+  const supaUrl = Deno.env.get("SUPABASE_URL");
+  const supaAnon = Deno.env.get("SUPABASE_ANON_KEY") || Deno.env.get("SUPABASE_PUBLISHABLE_KEY");
+  if (!supaUrl || !supaAnon) return null;
+  try {
+    const c = createClient(supaUrl, supaAnon);
+    const { data, error } = await c.auth.getUser(token!);
+    if (error || !data?.user) return null;
+    return { id: data.user.id, email: (data.user.email || "").trim().toLowerCase() };
+  } catch { return null; }
+}
+
+
 serve(async (req) => {
   if (req.method === "OPTIONS") return new Response(null, { headers: corsHeaders });
 
