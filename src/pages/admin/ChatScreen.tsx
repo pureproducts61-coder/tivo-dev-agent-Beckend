@@ -373,16 +373,23 @@ export default function ChatScreen() {
     }
   }
 
-  async function backendCall(fn: string, path: string, body: any, method: "POST" | "GET" = "POST") {
+  async function backendCall(
+    fn: string,
+    path: string,
+    body: any,
+    method: "POST" | "GET" | "PUT" | "DELETE" = "POST",
+  ) {
     if (!session) throw new Error("No session");
     const res = await fetch(`${BACKEND}/functions/v1/${fn}/${path}`, {
       method,
       headers: { "Content-Type": "application/json", "x-master-secret": session.masterSecret },
       body: method === "GET" ? undefined : JSON.stringify(body),
     });
-    if (!res.ok) throw new Error(`${path} → HTTP ${res.status}`);
-    return res.json();
+    const data = await res.json().catch(() => ({}));
+    if (!res.ok) throw new Error(data?.error || `${path} → HTTP ${res.status}`);
+    return data;
   }
+
 
   const actions = [
     {
