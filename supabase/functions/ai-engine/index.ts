@@ -485,7 +485,7 @@ CRITICAL RULES:
       ];
 
       if (doStream) {
-        const streamResp = await callAI(messages, true, model);
+        const streamResp = await streamOrErrorSse(messages, model);
         return new Response(streamResp.body, { headers: { ...corsHeaders, "Content-Type": "text/event-stream" } });
       }
 
