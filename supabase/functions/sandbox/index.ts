@@ -100,12 +100,26 @@ serve(async (req) => {
       }
     }
     if (!tenantId && providedSecret && providedSecret === Deno.env.get("SUPER_ADMIN_MASTER_SECRET")) tenantId = "super_admin";
+
+    // Verified user identity (server-side JWT check — never trust a client-supplied user_id)
+    const bearer = (req.headers.get("authorization") || "").replace(/^Bearer\s+/i, "").trim() || null;
+    const verifiedUser =
+      (await verifyUserJwt(bearer)) ??
+      (looksLikeJwt(providedSecret) ? await verifyUserJwt(providedSecret) : null);
+    if (!tenantId && verifiedUser?.email === LOCKED_SUPER_ADMIN_EMAIL) tenantId = "super_admin";
     if (!tenantId) return jsonResponse({ error: "Unauthorized" }, 401);
 
     // Supabase is optional — only needed for project_id lookups
     const supabase = tryGetSupabase();
     const isSA = tenantId === "super_admin";
     const tFilter = (q: any) => isSA ? q : q.eq("tenant_id", tenantId);
+
+    // Resource ownership must derive from the verified session, never from request body.
+    const resolveOwnerUserId = (claimed: unknown): string | null => {
+      if (verifiedUser) return verifiedUser.id;
+      if (isSA) return typeof claimed === "string" && claimed ? claimed : "system";
+      return null;
+    };
 
     const url = new URL(req.url);
     const pathParts = url.pathname.split("/").filter(Boolean);
