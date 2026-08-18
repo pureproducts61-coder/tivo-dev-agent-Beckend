@@ -638,7 +638,7 @@ Fix ALL remaining issues. Return JSON: {"score":0-100,"fixed_files":[{"path":"st
 
       await supabase.from("memory_logs").insert({
         action: "auto_build_complete",
-        user_id: user_id || null,
+        user_id: ownerUserId === "system" ? null : ownerUserId,
         details: { project_id: saved?.id, description, steps_count: steps.length, audit_score: currentScore, build_time_ms: Date.now() - startTime },
       }).catch(() => {});
 
