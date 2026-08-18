@@ -148,50 +148,117 @@ async function callHFInference(messages: any[], model?: string): Promise<string>
   return data.choices?.[0]?.message?.content || "";
 }
 
+/**
+ * Wrap a plain text completion into an OpenAI-compatible SSE stream so a
+ * non-streaming fallback provider can still satisfy a streaming client.
+ */
+function textAsSseResponse(text: string, model: string): Response {
+  const enc = new TextEncoder();
+  const CHUNK = 400;
+  const body = new ReadableStream({
+    start(controller) {
+      const frame = (delta: string) =>
+        controller.enqueue(
+          enc.encode(
+            `data: ${JSON.stringify({ object: "chat.completion.chunk", model, choices: [{ index: 0, delta: { content: delta } }] })}\n\n`,
+          ),
+        );
+      for (let i = 0; i < text.length; i += CHUNK) frame(text.slice(i, i + CHUNK));
+      if (!text) frame("");
+      controller.enqueue(enc.encode("data: [DONE]\n\n"));
+      controller.close();
+    },
+  });
+  return new Response(body, { headers: { "Content-Type": "text/event-stream" } });
+}
+
 async function callAI(messages: any[], stream = false, model = "google/gemini-3-flash-preview", modalities?: string[]) {
   const LOVABLE_API_KEY = Deno.env.get("LOVABLE_API_KEY");
   const HF_TOKEN = Deno.env.get("HF_INFERENCE_TOKEN") || Deno.env.get("HF_TOKEN");
   const GEMINI_KEY = Deno.env.get("GEMINI_API_KEY");
 
-  const tryFallback = async (): Promise<string | null> => {
-    if (stream || modalities) return null;
+  // Text fallback chain — available for streaming requests too (the text is
+  // re-framed as SSE below), never for image/modality requests.
+  const tryFallbackText = async (): Promise<string | null> => {
+    if (modalities) return null;
     if (GEMINI_KEY) { try { return await callGemini(messages); } catch (_) {} }
     if (HF_TOKEN)  { try { return await callHFInference(messages); } catch (_) {} }
     return null;
   };
 
+  const fallback = async (): Promise<Response | string | null> => {
+    const text = await tryFallbackText();
+    if (text === null) return null;
+    return stream ? textAsSseResponse(text, model) : text;
+  };
+
+  // Lovable AI Gateway is optional: when no key is configured we go straight
+  // to the configured providers instead of failing.
   if (!LOVABLE_API_KEY) {
-    const fb = await tryFallback();
+    const fb = await fallback();
     if (fb !== null) return fb;
-    throw new Error("LOVABLE_API_KEY not configured (and no Gemini/HF fallback available for this request)");
+    throw new Error("No AI provider configured (LOVABLE_API_KEY / GEMINI_API_KEY / HF_INFERENCE_TOKEN all missing)");
   }
 
   const bodyPayload: any = { model, messages, stream };
   if (modalities) bodyPayload.modalities = modalities;
 
-  const response = await fetch("https://ai.gateway.lovable.dev/v1/chat/completions", {
-    method: "POST",
-    headers: { Authorization: `Bearer ${LOVABLE_API_KEY}`, "Content-Type": "application/json" },
-    body: JSON.stringify(bodyPayload),
-  });
+  let response: Response | null = null;
+  try {
+    response = await fetch("https://ai.gateway.lovable.dev/v1/chat/completions", {
+      method: "POST",
+      headers: { Authorization: `Bearer ${LOVABLE_API_KEY}`, "Content-Type": "application/json" },
+      body: JSON.stringify(bodyPayload),
+    });
+  } catch (_) {
+    // network-level failure → fall through to the provider chain
+    const fb = await fallback();
+    if (fb !== null) return fb;
+    throw new Error("AI gateway unreachable and no fallback provider available");
+  }
 
   if (!response.ok) {
-    if (response.status === 429 || response.status === 402 || response.status >= 500) {
-      const fb = await tryFallback();
-      if (fb !== null) return fb;
-    }
+    const fb = await fallback();
+    if (fb !== null) return fb;
     if (response.status === 429) throw new Error("Rate limited - try again later");
     if (response.status === 402) throw new Error("AI credits exhausted");
     throw new Error(`AI gateway error: ${response.status}`);
   }
 
-  if (stream) return response;
+  if (stream) {
+    if (!response.body) {
+      const fb = await fallback();
+      if (fb !== null) return fb;
+      throw new Error("AI gateway returned an empty stream");
+    }
+    return response;
+  }
   const data = await response.json();
   if (data.choices?.[0]?.message?.images?.length) {
     return { text: data.choices[0].message.content || "", images: data.choices[0].message.images };
   }
   return data.choices?.[0]?.message?.content || "";
 }
+
+/**
+ * Streaming entry point for routes: always resolves to a Response whose body is
+ * an SSE stream. If every provider fails, the failure is streamed as visible
+ * text so the chat never stays silently empty.
+ */
+async function streamOrErrorSse(messages: any[], model?: string): Promise<Response> {
+  const m = model || "google/gemini-3-flash-preview";
+  try {
+    const r = await callAI(messages, true, m);
+    if (r instanceof Response) return r;
+    return textAsSseResponse(typeof r === "string" ? r : JSON.stringify(r), m);
+  } catch (e) {
+    const msg = e instanceof Error ? e.message : "AI request failed";
+    return textAsSseResponse(`❌ AI provider unavailable: ${msg}`, m);
+  }
+}
+
+
+
 
 function parseJsonFromAI(result: string) {
   try {
@@ -356,11 +423,12 @@ Rules:
       ];
 
       if (doStream) {
-        const streamResp = await callAI(messages, true, model);
+        const streamResp = await streamOrErrorSse(messages, model);
         return new Response(streamResp.body, {
           headers: { ...corsHeaders, "Content-Type": "text/event-stream" },
         });
       }
+
 
       const result = await callAI(messages, false, model);
       return jsonResponse({ success: true, code: result });
@@ -436,7 +504,7 @@ CRITICAL RULES:
       ];
 
       if (doStream) {
-        const streamResp = await callAI(messages, true, model);
+        const streamResp = await streamOrErrorSse(messages, model);
         return new Response(streamResp.body, { headers: { ...corsHeaders, "Content-Type": "text/event-stream" } });
       }
 

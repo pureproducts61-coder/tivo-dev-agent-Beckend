@@ -20,7 +20,8 @@ type Proposal = {
 const STATUS_TONE: Record<string, string> = {
   pending:  "bg-amber-950/40 text-amber-300 border-amber-800/60",
   approved: "bg-emerald-950/40 text-emerald-300 border-emerald-800/60",
-  denied:   "bg-red-950/40 text-red-300 border-red-800/60",
+  rejected: "bg-red-950/40 text-red-300 border-red-800/60",
+  denied:   "bg-red-950/40 text-red-300 border-red-800/60", // legacy value, read-only
   applied:  "bg-sky-950/40 text-sky-300 border-sky-800/60",
   cancelled:"bg-zinc-900 text-zinc-400 border-zinc-800",
 };
@@ -43,7 +44,7 @@ export default function Approvals() {
       .order("created_at", { ascending: false })
       .limit(200);
     if (tab === "pending") q = q.eq("status", "pending");
-    if (tab === "history") q = q.in("status", ["approved", "denied", "applied", "cancelled"]);
+    if (tab === "history") q = q.in("status", ["approved", "rejected", "denied", "applied", "cancelled"]);
     const { data, error } = await q;
     if (error) setErr(error.message);
     else setItems((data || []) as Proposal[]);
@@ -52,7 +53,7 @@ export default function Approvals() {
 
   useEffect(() => { load(); /* eslint-disable-next-line */ }, [tab]);
 
-  async function updateStatus(id: string, next: "approved" | "denied") {
+  async function updateStatus(id: string, next: "approved" | "rejected") {
     if (!session) return;
     setBusy(id);
     try {
@@ -199,7 +200,7 @@ export default function Approvals() {
                           </button>
                           <button
                             disabled={busy === p.id}
-                            onClick={() => updateStatus(p.id, "denied")}
+                            onClick={() => updateStatus(p.id, "rejected")}
                             className="inline-flex items-center justify-center gap-1.5 px-3 py-1.5 rounded-lg text-xs bg-red-800 hover:bg-red-700 text-white disabled:opacity-50"
                           >
                             <XCircle className="w-3.5 h-3.5" /> Deny

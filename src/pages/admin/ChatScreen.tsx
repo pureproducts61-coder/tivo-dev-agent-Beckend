@@ -17,7 +17,7 @@ const BACKEND = import.meta.env.VITE_SUPABASE_URL;
 // every chat request so the model knows what the platform is, what surfaces
 // exist, how to behave, and (critically) what it must NEVER leak.
 // ============================================================================
-const TIVO_CONSTITUTION = `You are **TIVO DEV AGENT** — the autonomous, security-first full-stack DevOps AI that powers the entire TIVO AI OS platform. You serve ONE person: শেখ রেজওয়ান (Super Admin, pureproducts61@gmail.com). Everyone else is a client he may redirect to Lovable.
+const TIVO_CONSTITUTION_FALLBACK = `You are **TIVO DEV AGENT** — the autonomous, security-first full-stack DevOps AI that powers the entire TIVO AI OS platform. You serve ONE person: শেখ রেজওয়ান (Super Admin, pureproducts61@gmail.com). Everyone else is a client he may redirect to Lovable.
 
 ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 🏛️  PLATFORM MAP
@@ -89,17 +89,46 @@ Every autonomous action is logged to \`audit_logs\`. Silence and hallucination a
 Reply in the admin's language (Bangla default, English on request). Markdown. Tight code blocks (they render with a copy button — never inline giant blobs into prose). Feedback thumbs and per-response metrics are visible; treat 👎 as a signal to log the failure and self-review. No filler, no apologies, no "as an AI".`;
 
 
+/**
+ * Canonical AI Constitution = the active row in `public.ai_constitution`.
+ * The hardcoded string above is ONLY a last-resort fallback for when the
+ * database record cannot be read (offline / RLS / empty table).
+ */
+let constitutionCache: { body: string; at: number } | null = null;
+
+async function loadConstitution(): Promise<string> {
+  if (constitutionCache && Date.now() - constitutionCache.at < 5 * 60_000) return constitutionCache.body;
+  try {
+    const { data } = await supabase
+      .from("ai_constitution")
+      .select("body,version")
+      .eq("is_active", true)
+      .order("updated_at", { ascending: false })
+      .limit(1)
+      .maybeSingle();
+    const body = (data?.body || "").trim();
+    if (body) {
+      constitutionCache = { body, at: Date.now() };
+      return body;
+    }
+  } catch {
+    /* fall through to the local fallback */
+  }
+  return TIVO_CONSTITUTION_FALLBACK;
+}
+
 async function buildSystemPrompt(): Promise<string> {
+  const constitution = await loadConstitution();
   try {
     const { data } = await supabase
       .from("ai_variables")
       .select("key,value,description,is_secret")
       .limit(200);
     const rows = (data || []) as Array<{ key: string; value: string; description: string | null; is_secret: boolean }>;
-    if (rows.length === 0) return TIVO_CONSTITUTION;
+    if (rows.length === 0) return constitution;
     const nonSecret = rows.filter((r) => !r.is_secret);
     const secret = rows.filter((r) => r.is_secret);
-    const parts: string[] = [TIVO_CONSTITUTION, "\n\n━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━\n🗝️  AI VARIABLES AVAILABLE THIS SESSION\n━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"];
+    const parts: string[] = [constitution, "\n\n━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━\n🗝️  AI VARIABLES AVAILABLE THIS SESSION\n━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"];
     if (nonSecret.length) {
       parts.push("\n**Injected (safe to use directly):**");
       for (const v of nonSecret) parts.push(`- \`${v.key}\` = ${JSON.stringify(v.value)}${v.description ? ` — ${v.description}` : ""}`);
@@ -111,9 +140,10 @@ async function buildSystemPrompt(): Promise<string> {
     parts.push("\nWhen a task needs one of these values, reference it by \\`{{KEY}}\\` — the build pipeline will substitute it at execution time.");
     return parts.join("\n");
   } catch {
-    return TIVO_CONSTITUTION;
+    return constitution;
   }
 }
+
 
 function extractArtifacts(content: string): { clean: string; artifacts: Artifact[]; invalidJson?: string } {
   const re = /```tivo-artifacts\s*([\s\S]*?)```/g;
@@ -343,16 +373,23 @@ export default function ChatScreen() {
     }
   }
 
-  async function backendCall(fn: string, path: string, body: any, method: "POST" | "GET" = "POST") {
+  async function backendCall(
+    fn: string,
+    path: string,
+    body: any,
+    method: "POST" | "GET" | "PUT" | "DELETE" = "POST",
+  ) {
     if (!session) throw new Error("No session");
     const res = await fetch(`${BACKEND}/functions/v1/${fn}/${path}`, {
       method,
       headers: { "Content-Type": "application/json", "x-master-secret": session.masterSecret },
       body: method === "GET" ? undefined : JSON.stringify(body),
     });
-    if (!res.ok) throw new Error(`${path} → HTTP ${res.status}`);
-    return res.json();
+    const data = await res.json().catch(() => ({}));
+    if (!res.ok) throw new Error(data?.error || `${path} → HTTP ${res.status}`);
+    return data;
   }
+
 
   const actions = [
     {
@@ -379,7 +416,9 @@ export default function ChatScreen() {
       desc: "Trigger a fresh build",
       onClick: () =>
         withProject("Rebuilding", async (id) => {
-          await backendCall("project-manager", "update", { id, build_status: "queued" }, "POST");
+          // project-manager exposes `update` as PUT — method must match or the
+          // rebuild silently 404s.
+          await backendCall("project-manager", "update", { id, build_status: "queued" }, "PUT");
           logAudit("project.update", id, { build_status: "queued" });
         }),
     },
@@ -533,8 +572,9 @@ export default function ChatScreen() {
       onClick: () =>
         withProject("Deleting", async (id) => {
           if (!confirm("সত্যিই delete করবে? এটা undo করা যাবে না।")) throw new Error("Cancelled");
-          const { error } = await supabase.from("projects").delete().eq("id", id);
-          if (error) throw new Error(error.message);
+          // Canonical secure path: project-manager verifies ownership/super-admin
+          // and removes the project's storage artifacts before deleting the row.
+          await backendCall("project-manager", "delete", { id }, "DELETE");
           logAudit("project.delete", id);
         }),
     },
