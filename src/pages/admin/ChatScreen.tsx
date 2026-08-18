@@ -416,7 +416,9 @@ export default function ChatScreen() {
       desc: "Trigger a fresh build",
       onClick: () =>
         withProject("Rebuilding", async (id) => {
-          await backendCall("project-manager", "update", { id, build_status: "queued" }, "POST");
+          // project-manager exposes `update` as PUT — method must match or the
+          // rebuild silently 404s.
+          await backendCall("project-manager", "update", { id, build_status: "queued" }, "PUT");
           logAudit("project.update", id, { build_status: "queued" });
         }),
     },
