@@ -78,6 +78,23 @@ function parseJsonFromAI(result: string) {
   } catch { return null; }
 }
 
+// === Verified user identity helpers ===
+const LOCKED_SUPER_ADMIN_EMAIL = "pureproducts61@gmail.com";
+const looksLikeJwt = (v: string | null) => !!v && v.split(".").length === 3 && v.length > 60;
+async function verifyUserJwt(token: string | null): Promise<{ id: string; email: string } | null> {
+  if (!looksLikeJwt(token)) return null;
+  const supaUrl = Deno.env.get("SUPABASE_URL");
+  const supaAnon = Deno.env.get("SUPABASE_ANON_KEY") || Deno.env.get("SUPABASE_PUBLISHABLE_KEY");
+  if (!supaUrl || !supaAnon) return null;
+  try {
+    const c = createClient(supaUrl, supaAnon);
+    const { data, error } = await c.auth.getUser(token!);
+    if (error || !data?.user) return null;
+    return { id: data.user.id, email: (data.user.email || "").trim().toLowerCase() };
+  } catch { return null; }
+}
+
+
 serve(async (req) => {
   if (req.method === "OPTIONS") return new Response(null, { headers: corsHeaders });
 
@@ -100,12 +117,26 @@ serve(async (req) => {
       }
     }
     if (!tenantId && providedSecret && providedSecret === Deno.env.get("SUPER_ADMIN_MASTER_SECRET")) tenantId = "super_admin";
+
+    // Verified user identity (server-side JWT check — never trust a client-supplied user_id)
+    const bearer = (req.headers.get("authorization") || "").replace(/^Bearer\s+/i, "").trim() || null;
+    const verifiedUser =
+      (await verifyUserJwt(bearer)) ??
+      (looksLikeJwt(providedSecret) ? await verifyUserJwt(providedSecret) : null);
+    if (!tenantId && verifiedUser?.email === LOCKED_SUPER_ADMIN_EMAIL) tenantId = "super_admin";
     if (!tenantId) return jsonResponse({ error: "Unauthorized" }, 401);
 
     // Supabase is optional — only needed for project_id lookups
     const supabase = tryGetSupabase();
     const isSA = tenantId === "super_admin";
     const tFilter = (q: any) => isSA ? q : q.eq("tenant_id", tenantId);
+
+    // Resource ownership must derive from the verified session, never from request body.
+    const resolveOwnerUserId = (claimed: unknown): string | null => {
+      if (verifiedUser) return verifiedUser.id;
+      if (isSA) return typeof claimed === "string" && claimed ? claimed : "system";
+      return null;
+    };
 
     const url = new URL(req.url);
     const pathParts = url.pathname.split("/").filter(Boolean);
@@ -268,8 +299,10 @@ serve(async (req) => {
       files.push({ path: "setup.sh", content: `#!/bin/bash\nnpm install\nnpm run dev || npm start` });
       files.push({ path: "install.bat", content: `@echo off\ncall npm install\ncall npm run dev || call npm start\npause` });
 
+      const factoryOwnerUserId = resolveOwnerUserId(user_id);
+      if (!factoryOwnerUserId) return jsonResponse({ error: "Unauthorized — verified user session required" }, 401);
       const { data: saved } = await supabase.from("projects").insert({
-        user_id: user_id || "system", name: project.project_name || "factory-project", description, files, status: "active", build_status: "live",
+        user_id: factoryOwnerUserId, name: project.project_name || "factory-project", description, files, status: "active", build_status: "live",
         build_metadata: { pipeline },
         version_history: [{ version: 1, timestamp: new Date().toISOString(), note: "Factory build" }],
       }).select().single();

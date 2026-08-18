@@ -87,6 +87,24 @@ function resolveTenant(providedSecret: string | null): { tenantId: string } | nu
   return null;
 }
 
+// === Verified user identity (server-side JWT check — never trust client-supplied user_id) ===
+const LOCKED_SUPER_ADMIN_EMAIL = "pureproducts61@gmail.com";
+const looksLikeJwt = (v: string | null) => !!v && v.split(".").length === 3 && v.length > 60;
+async function verifyUserJwt(token: string | null): Promise<{ id: string; email: string } | null> {
+  if (!looksLikeJwt(token)) return null;
+  const supaUrl = Deno.env.get("SUPABASE_URL");
+  const supaAnon = Deno.env.get("SUPABASE_ANON_KEY") || Deno.env.get("SUPABASE_PUBLISHABLE_KEY");
+  if (!supaUrl || !supaAnon) return null;
+  try {
+    const c = createClient(supaUrl, supaAnon);
+    const { data, error } = await c.auth.getUser(token!);
+    if (error || !data?.user) return null;
+    return { id: data.user.id, email: (data.user.email || "").trim().toLowerCase() };
+  } catch { return null; }
+}
+
+
+
 // === Google Gemini direct API fallback (when Lovable AI quota exhausted) ===
 async function callGemini(messages: any[]): Promise<string> {
   const KEY = Deno.env.get("GEMINI_API_KEY");
@@ -288,9 +306,23 @@ serve(async (req) => {
 
   try {
     const providedSecret = req.headers.get("x-master-secret");
-    const tenant = resolveTenant(providedSecret);
-    if (!tenant) return jsonResponse({ error: "Unauthorized" }, 401);
-    const tenantId = tenant.tenantId;
+    const bearer = (req.headers.get("authorization") || "").replace(/^Bearer\s+/i, "").trim() || null;
+    const verifiedUser =
+      (await verifyUserJwt(bearer)) ??
+      (looksLikeJwt(providedSecret) ? await verifyUserJwt(providedSecret) : null);
+
+    let resolved = resolveTenant(providedSecret)?.tenantId ?? null;
+    if (!resolved && verifiedUser?.email === LOCKED_SUPER_ADMIN_EMAIL) resolved = "super_admin";
+    if (!resolved) return jsonResponse({ error: "Unauthorized" }, 401);
+    const tenantId = resolved;
+    const isSuperAdmin = tenantId === "super_admin";
+
+    // Resource ownership must derive from the verified session, never from request body.
+    const resolveOwnerUserId = (claimed: unknown): string | null => {
+      if (verifiedUser) return verifiedUser.id;
+      if (isSuperAdmin) return typeof claimed === "string" && claimed ? claimed : "system";
+      return null;
+    };
 
     const url = new URL(req.url);
     const pathParts = url.pathname.split("/").filter(Boolean);
@@ -577,9 +609,11 @@ Fix ALL remaining issues. Return JSON: {"score":0-100,"fixed_files":[{"path":"st
       finalFiles.push({ path: "setup.sh", content: installers["setup.sh"] });
       finalFiles.push({ path: "install.bat", content: installers["install.bat"] });
 
-      // Step 5: Save to DB
+      // Step 5: Save to DB (owner comes from the verified session, not the request body)
+      const ownerUserId = resolveOwnerUserId(user_id);
+      if (!ownerUserId) return jsonResponse({ error: "Unauthorized — verified user session required" }, 401);
       const { data: saved } = await supabase.from("projects").insert({
-        user_id: user_id || "system",
+        user_id: ownerUserId,
         tenant_id: tenantId === "super_admin" ? "tenant_main" : tenantId,
         name: projectName,
         description: description || "",
@@ -604,7 +638,7 @@ Fix ALL remaining issues. Return JSON: {"score":0-100,"fixed_files":[{"path":"st
 
       await supabase.from("memory_logs").insert({
         action: "auto_build_complete",
-        user_id: user_id || null,
+        user_id: ownerUserId === "system" ? null : ownerUserId,
         details: { project_id: saved?.id, description, steps_count: steps.length, audit_score: currentScore, build_time_ms: Date.now() - startTime },
       }).catch(() => {});
 
@@ -707,9 +741,11 @@ Generate 15-40 files. Complete code, no TODOs. TypeScript strict.`,
       projectData.files.push({ path: "setup.sh", content: installers["setup.sh"] });
       projectData.files.push({ path: "install.bat", content: installers["install.bat"] });
 
-      // Save to DB
+      // Save to DB (owner comes from the verified session, not the request body)
+      const fsOwnerUserId = resolveOwnerUserId(user_id);
+      if (!fsOwnerUserId) return jsonResponse({ error: "Unauthorized — verified user session required" }, 401);
       const { data: saved } = await supabase.from("projects").insert({
-        user_id: user_id || "system",
+        user_id: fsOwnerUserId,
         tenant_id: tenantId === "super_admin" ? "tenant_main" : tenantId,
         name: projectName,
         description,
