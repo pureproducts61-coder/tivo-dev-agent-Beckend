@@ -208,8 +208,17 @@ serve(async (req) => {
       const cleanName = sanitizeProjectName(name || "");
       if (!cleanName || cleanName.length < 1) return jsonResponse({ error: "valid name required (1-64 chars, alnum/space/._-)" }, 400);
 
+      // Ownership can never come from client input: use the verified session identity.
+      // Only a super admin may create a project on behalf of another user_id.
+      const ownerUserId = verifiedUser
+        ? verifiedUser.id
+        : isSuperAdmin
+          ? (typeof user_id === "string" && user_id ? user_id : "system")
+          : null;
+      if (!ownerUserId) return jsonResponse({ error: "Unauthorized — verified user session required to create a project" }, 401);
+
       const { data, error } = await supabase.from("projects").insert({
-        user_id: user_id || "system",
+        user_id: ownerUserId,
         tenant_id: tenantId,
         name: cleanName,
         description: (description || "").toString().slice(0, 2000),
