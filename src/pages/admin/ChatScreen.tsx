@@ -572,8 +572,9 @@ export default function ChatScreen() {
       onClick: () =>
         withProject("Deleting", async (id) => {
           if (!confirm("সত্যিই delete করবে? এটা undo করা যাবে না।")) throw new Error("Cancelled");
-          const { error } = await supabase.from("projects").delete().eq("id", id);
-          if (error) throw new Error(error.message);
+          // Canonical secure path: project-manager verifies ownership/super-admin
+          // and removes the project's storage artifacts before deleting the row.
+          await backendCall("project-manager", "delete", { id }, "DELETE");
           logAudit("project.delete", id);
         }),
     },
