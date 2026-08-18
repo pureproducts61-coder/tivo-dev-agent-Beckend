@@ -306,9 +306,23 @@ serve(async (req) => {
 
   try {
     const providedSecret = req.headers.get("x-master-secret");
-    const tenant = resolveTenant(providedSecret);
-    if (!tenant) return jsonResponse({ error: "Unauthorized" }, 401);
-    const tenantId = tenant.tenantId;
+    const bearer = (req.headers.get("authorization") || "").replace(/^Bearer\s+/i, "").trim() || null;
+    const verifiedUser =
+      (await verifyUserJwt(bearer)) ??
+      (looksLikeJwt(providedSecret) ? await verifyUserJwt(providedSecret) : null);
+
+    let resolved = resolveTenant(providedSecret)?.tenantId ?? null;
+    if (!resolved && verifiedUser?.email === LOCKED_SUPER_ADMIN_EMAIL) resolved = "super_admin";
+    if (!resolved) return jsonResponse({ error: "Unauthorized" }, 401);
+    const tenantId = resolved;
+    const isSuperAdmin = tenantId === "super_admin";
+
+    // Resource ownership must derive from the verified session, never from request body.
+    const resolveOwnerUserId = (claimed: unknown): string | null => {
+      if (verifiedUser) return verifiedUser.id;
+      if (isSuperAdmin) return typeof claimed === "string" && claimed ? claimed : "system";
+      return null;
+    };
 
     const url = new URL(req.url);
     const pathParts = url.pathname.split("/").filter(Boolean);
