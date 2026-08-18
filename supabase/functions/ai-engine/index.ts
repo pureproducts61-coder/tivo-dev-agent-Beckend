@@ -609,9 +609,11 @@ Fix ALL remaining issues. Return JSON: {"score":0-100,"fixed_files":[{"path":"st
       finalFiles.push({ path: "setup.sh", content: installers["setup.sh"] });
       finalFiles.push({ path: "install.bat", content: installers["install.bat"] });
 
-      // Step 5: Save to DB
+      // Step 5: Save to DB (owner comes from the verified session, not the request body)
+      const ownerUserId = resolveOwnerUserId(user_id);
+      if (!ownerUserId) return jsonResponse({ error: "Unauthorized — verified user session required" }, 401);
       const { data: saved } = await supabase.from("projects").insert({
-        user_id: user_id || "system",
+        user_id: ownerUserId,
         tenant_id: tenantId === "super_admin" ? "tenant_main" : tenantId,
         name: projectName,
         description: description || "",
