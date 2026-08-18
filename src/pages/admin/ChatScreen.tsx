@@ -89,17 +89,46 @@ Every autonomous action is logged to \`audit_logs\`. Silence and hallucination a
 Reply in the admin's language (Bangla default, English on request). Markdown. Tight code blocks (they render with a copy button — never inline giant blobs into prose). Feedback thumbs and per-response metrics are visible; treat 👎 as a signal to log the failure and self-review. No filler, no apologies, no "as an AI".`;
 
 
+/**
+ * Canonical AI Constitution = the active row in `public.ai_constitution`.
+ * The hardcoded string above is ONLY a last-resort fallback for when the
+ * database record cannot be read (offline / RLS / empty table).
+ */
+let constitutionCache: { body: string; at: number } | null = null;
+
+async function loadConstitution(): Promise<string> {
+  if (constitutionCache && Date.now() - constitutionCache.at < 5 * 60_000) return constitutionCache.body;
+  try {
+    const { data } = await supabase
+      .from("ai_constitution")
+      .select("body,version")
+      .eq("is_active", true)
+      .order("updated_at", { ascending: false })
+      .limit(1)
+      .maybeSingle();
+    const body = (data?.body || "").trim();
+    if (body) {
+      constitutionCache = { body, at: Date.now() };
+      return body;
+    }
+  } catch {
+    /* fall through to the local fallback */
+  }
+  return TIVO_CONSTITUTION_FALLBACK;
+}
+
 async function buildSystemPrompt(): Promise<string> {
+  const constitution = await loadConstitution();
   try {
     const { data } = await supabase
       .from("ai_variables")
       .select("key,value,description,is_secret")
       .limit(200);
     const rows = (data || []) as Array<{ key: string; value: string; description: string | null; is_secret: boolean }>;
-    if (rows.length === 0) return TIVO_CONSTITUTION;
+    if (rows.length === 0) return constitution;
     const nonSecret = rows.filter((r) => !r.is_secret);
     const secret = rows.filter((r) => r.is_secret);
-    const parts: string[] = [TIVO_CONSTITUTION, "\n\n━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━\n🗝️  AI VARIABLES AVAILABLE THIS SESSION\n━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"];
+    const parts: string[] = [constitution, "\n\n━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━\n🗝️  AI VARIABLES AVAILABLE THIS SESSION\n━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"];
     if (nonSecret.length) {
       parts.push("\n**Injected (safe to use directly):**");
       for (const v of nonSecret) parts.push(`- \`${v.key}\` = ${JSON.stringify(v.value)}${v.description ? ` — ${v.description}` : ""}`);
@@ -111,9 +140,10 @@ async function buildSystemPrompt(): Promise<string> {
     parts.push("\nWhen a task needs one of these values, reference it by \\`{{KEY}}\\` — the build pipeline will substitute it at execution time.");
     return parts.join("\n");
   } catch {
-    return TIVO_CONSTITUTION;
+    return constitution;
   }
 }
+
 
 function extractArtifacts(content: string): { clean: string; artifacts: Artifact[]; invalidJson?: string } {
   const re = /```tivo-artifacts\s*([\s\S]*?)```/g;
