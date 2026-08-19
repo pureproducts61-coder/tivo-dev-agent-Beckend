@@ -488,8 +488,26 @@ export default function ChatScreen() {
       label: "Open Preview",
       icon: ActionIcons.Eye,
       desc: "Live preview in new tab",
-      onClick: () => window.open("/", "_blank", "noopener"),
+      onClick: () =>
+        withProject("Opening preview", async (id) => {
+          // Must open the SELECTED project's real preview URL — never the TIVO root
+          // and never a fabricated URL.
+          const { data, error } = await supabase
+            .from("projects")
+            .select("public_url")
+            .eq("id", id)
+            .maybeSingle();
+          if (error) throw new Error(error.message);
+          const url = data?.public_url?.trim();
+          if (!url) {
+            throw new Error(
+              "এই project-এর কোনো preview URL নেই — আগে Publish করো, তারপর preview খোলা যাবে।",
+            );
+          }
+          window.open(url, "_blank", "noopener");
+        }),
     },
+
     {
       id: "security",
       label: "Security Scan",
