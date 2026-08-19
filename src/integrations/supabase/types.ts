@@ -440,7 +440,9 @@ export type Database = {
           is_active: boolean
           metadata: Json
           name: string
+          platforms: string[]
           provider: string
+          quantization: string | null
           required_ram_mb: number | null
           size_bytes: number | null
           source_kind: string
@@ -459,7 +461,9 @@ export type Database = {
           is_active?: boolean
           metadata?: Json
           name: string
+          platforms?: string[]
           provider: string
+          quantization?: string | null
           required_ram_mb?: number | null
           size_bytes?: number | null
           source_kind?: string
@@ -478,7 +482,9 @@ export type Database = {
           is_active?: boolean
           metadata?: Json
           name?: string
+          platforms?: string[]
           provider?: string
+          quantization?: string | null
           required_ram_mb?: number | null
           size_bytes?: number | null
           source_kind?: string
