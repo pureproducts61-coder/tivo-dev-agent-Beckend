@@ -62,14 +62,23 @@ function readBody(req) {
   });
 }
 
-// Write project files to disk
+// Write project files to disk (path-traversal safe)
 function writeProjectFiles(buildDir, files) {
+  const root = path.resolve(buildDir);
   for (const file of files) {
-    const filePath = path.join(buildDir, file.path);
+    const rel = String(file && file.path ? file.path : "");
+    if (!rel || path.isAbsolute(rel) || rel.includes("\0") || rel.split(/[\\/]/).includes("..")) {
+      throw new Error("Invalid file path");
+    }
+    const filePath = path.resolve(root, rel);
+    if (filePath !== root && !filePath.startsWith(root + path.sep)) {
+      throw new Error("Invalid file path");
+    }
     fs.mkdirSync(path.dirname(filePath), { recursive: true });
     fs.writeFileSync(filePath, file.content || "", "utf-8");
   }
 }
+
 
 // === APK BUILD ===
 async function buildApk(buildId, files, config, tenant) {
