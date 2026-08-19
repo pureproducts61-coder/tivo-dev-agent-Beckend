@@ -5,14 +5,28 @@ import {
   Pencil, Trash2, BarChart3, Users, KeyRound, Sparkles, RotateCcw, Gauge,
 } from "lucide-react";
 
+/** Conceptual grouping for the project action menu. Optional — ungrouped
+ *  actions fall into "project" so existing callers keep working unchanged. */
+export type InputActionGroup = "tools" | "project" | "analytics" | "more";
+
 export interface InputAction {
   id: string;
   label: string;
   icon: any;
   desc?: string;
+  group?: InputActionGroup;
   onClick: () => void;
   tone?: "default" | "danger" | "primary";
 }
+
+const GROUP_ORDER: InputActionGroup[] = ["tools", "project", "analytics", "more"];
+const GROUP_LABEL: Record<InputActionGroup, string> = {
+  tools: "Tools",
+  project: "Project",
+  analytics: "Project analytics",
+  more: "More",
+};
+
 
 interface Props {
   value: string;
@@ -129,28 +143,40 @@ export function ChatInput({
                     onClick={(e) => e.stopPropagation()}
                     className="absolute left-0 bottom-12 w-60 max-h-[52vh] overflow-y-auto overscroll-contain rounded-2xl border border-zinc-800 bg-zinc-950/95 backdrop-blur-lg shadow-2xl shadow-black/60 p-1 z-50 animate-scale-in origin-bottom-left scrollbar-thin scrollbar-thumb-zinc-800"
                   >
-                    {actions.map((a) => {
-                      const Icon = a.icon;
+                    {GROUP_ORDER.map((g) => {
+                      const items = actions.filter((a) => (a.group ?? "project") === g);
+                      if (!items.length) return null;
                       return (
-                        <button
-                          key={a.id}
-                          onClick={() => {
-                            setMenuOpen(false);
-                            a.onClick();
-                          }}
-                          className={`w-full flex items-center gap-2.5 px-2.5 py-1.5 rounded-lg text-left text-[12px] transition ${
-                            a.tone === "danger"
-                              ? "text-red-400 hover:bg-red-950/30"
-                              : a.tone === "primary"
-                              ? "text-amber-300 hover:bg-amber-950/30"
-                              : "text-zinc-200 hover:bg-zinc-900"
-                          }`}
-                        >
-                          <Icon className="w-3.5 h-3.5 shrink-0" />
-                          <span className="truncate font-medium">{a.label}</span>
-                        </button>
+                        <div key={g} className="pt-1 first:pt-0">
+                          <div className="px-2.5 pb-1 text-[10px] uppercase tracking-wider text-zinc-500">
+                            {GROUP_LABEL[g]}
+                          </div>
+                          {items.map((a) => {
+                            const Icon = a.icon;
+                            return (
+                              <button
+                                key={a.id}
+                                onClick={() => {
+                                  setMenuOpen(false);
+                                  a.onClick();
+                                }}
+                                className={`w-full flex items-center gap-2.5 px-2.5 py-1.5 rounded-lg text-left text-[12px] transition ${
+                                  a.tone === "danger"
+                                    ? "text-red-400 hover:bg-red-950/30"
+                                    : a.tone === "primary"
+                                    ? "text-amber-300 hover:bg-amber-950/30"
+                                    : "text-zinc-200 hover:bg-zinc-900"
+                                }`}
+                              >
+                                <Icon className="w-3.5 h-3.5 shrink-0" />
+                                <span className="truncate font-medium">{a.label}</span>
+                              </button>
+                            );
+                          })}
+                        </div>
                       );
                     })}
+
                   </div>
                 )}
 

@@ -394,6 +394,7 @@ export default function ChatScreen() {
   const actions = [
     {
       id: "publish",
+      group: "project" as const,
       label: "Publish",
       icon: ActionIcons.Globe,
       desc: "Push current build live",
@@ -411,6 +412,7 @@ export default function ChatScreen() {
     },
     {
       id: "update",
+      group: "tools" as const,
       label: "Update & Rebuild",
       icon: ActionIcons.RefreshCw,
       desc: "Trigger a fresh build",
@@ -424,6 +426,7 @@ export default function ChatScreen() {
     },
     {
       id: "history",
+      group: "project" as const,
       label: "Version History",
       icon: ActionIcons.History,
       desc: "Recent snapshots",
@@ -443,6 +446,7 @@ export default function ChatScreen() {
     },
     {
       id: "share",
+      group: "project" as const,
       label: "Share Link",
       icon: ActionIcons.Share2,
       desc: "Copy public URL",
@@ -456,6 +460,7 @@ export default function ChatScreen() {
     },
     {
       id: "files",
+      group: "project" as const,
       label: "Project Files",
       icon: ActionIcons.Folder,
       desc: "Browse files in tab",
@@ -463,6 +468,7 @@ export default function ChatScreen() {
     },
     {
       id: "download",
+      group: "project" as const,
       label: "Download ZIP",
       icon: ActionIcons.Download,
       desc: "Export project bundle",
@@ -485,13 +491,33 @@ export default function ChatScreen() {
     },
     {
       id: "preview",
+      group: "tools" as const,
       label: "Open Preview",
       icon: ActionIcons.Eye,
       desc: "Live preview in new tab",
-      onClick: () => window.open("/", "_blank", "noopener"),
+      onClick: () =>
+        withProject("Opening preview", async (id) => {
+          // Must open the SELECTED project's real preview URL — never the TIVO root
+          // and never a fabricated URL.
+          const { data, error } = await supabase
+            .from("projects")
+            .select("public_url")
+            .eq("id", id)
+            .maybeSingle();
+          if (error) throw new Error(error.message);
+          const url = data?.public_url?.trim();
+          if (!url) {
+            throw new Error(
+              "এই project-এর কোনো preview URL নেই — আগে Publish করো, তারপর preview খোলা যাবে।",
+            );
+          }
+          window.open(url, "_blank", "noopener");
+        }),
     },
+
     {
       id: "security",
+      group: "tools" as const,
       label: "Security Scan",
       icon: ActionIcons.ShieldCheck,
       desc: "Scan & fix vulnerabilities",
@@ -499,6 +525,7 @@ export default function ChatScreen() {
     },
     {
       id: "variables",
+      group: "tools" as const,
       label: "AI Variables",
       icon: ActionIcons.KeyRound,
       desc: "Key/Value AI access",
@@ -506,6 +533,7 @@ export default function ChatScreen() {
     },
     {
       id: "rename",
+      group: "project" as const,
       label: "Rename Project",
       icon: ActionIcons.Pencil,
       desc: "Edit project name",
@@ -520,6 +548,7 @@ export default function ChatScreen() {
     },
     {
       id: "analytics",
+      group: "analytics" as const,
       label: "Analytics",
       icon: ActionIcons.BarChart3,
       desc: "Build & deploy metrics",
@@ -531,6 +560,7 @@ export default function ChatScreen() {
     },
     {
       id: "visitors",
+      group: "analytics" as const,
       label: "Visitors",
       icon: ActionIcons.Users,
       desc: "Live visitor stats",
@@ -542,6 +572,7 @@ export default function ChatScreen() {
     },
     {
       id: "performance",
+      group: "analytics" as const,
       label: "Performance",
       icon: ActionIcons.Gauge,
       desc: "Speed & uptime",
@@ -553,6 +584,7 @@ export default function ChatScreen() {
     },
     {
       id: "reopen",
+      group: "more" as const,
       label: "Reopen Project",
       icon: ActionIcons.RotateCcw,
       desc: "Restore archived project",
@@ -565,6 +597,7 @@ export default function ChatScreen() {
     },
     {
       id: "delete",
+      group: "more" as const,
       label: "Delete Project",
       icon: ActionIcons.Trash2,
       desc: "Permanently remove",

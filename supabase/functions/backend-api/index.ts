@@ -766,6 +766,208 @@ serve(async (req) => {
       await supabase.from("audit_logs").insert({ tenant_id: writeTenant, actor, action: act, target, details, ip });
     }
 
+    // ============================================================
+    // === MODEL REGISTRY (backend-only, Super Admin gated) ===
+    // Registry rows are never client-readable; every operation goes through here.
+    // Remote provider models stay source_kind='remote_api' — a downloaded file is
+    // NEVER presented as a runnable local model.
+    // ============================================================
+    const MODEL_STATES = [
+      "available", "downloading", "downloaded", "verifying", "installed",
+      "ready", "active", "failed", "deleting", "inactive", "deleted",
+    ];
+    const RUNNABLE_STATES = ["installed", "ready", "active"];
+
+    if (action.startsWith("models/")) {
+      if (!isSA) return jsonResponse({ error: "Super Admin only" }, 403);
+      if (!supabase) return jsonResponse({ error: "DB unavailable" }, 503);
+      const sub = action.slice("models/".length);
+
+      // list
+      if (sub === "list" && (req.method === "GET" || req.method === "POST")) {
+        const { data, error } = await supabase
+          .from("model_registry")
+          .select("*")
+          .neq("status", "deleted")
+          .order("updated_at", { ascending: false });
+        if (error) return jsonResponse((console.error("[db_error]", error), { error: "Database operation failed" }), 500);
+        return jsonResponse({ models: data || [] });
+      }
+
+      // register — metadata only; downloading is a separate, explicit step
+      if (sub === "register" && req.method === "POST") {
+        const {
+          name, provider, source_kind = "remote_api", format, size_bytes, required_ram_mb,
+          supported_runtimes = [], platforms = [], quantization, download_url, checksum, metadata = {},
+        } = body || {};
+        if (!name || !provider) return jsonResponse({ error: "name and provider required" }, 400);
+        if (!["remote_api", "downloadable"].includes(source_kind)) {
+          return jsonResponse({ error: "source_kind must be remote_api or downloadable" }, 400);
+        }
+        if (source_kind === "downloadable" && download_url && !/^https:\/\//i.test(download_url)) {
+          return jsonResponse({ error: "download_url must be https" }, 400);
+        }
+        const { data, error } = await supabase.from("model_registry").upsert({
+          tenant_id: "tenant_main",
+          name, provider, source_kind, format: format ?? null,
+          size_bytes: size_bytes ?? null, required_ram_mb: required_ram_mb ?? null,
+          supported_runtimes, platforms, quantization: quantization ?? null,
+          download_url: download_url ?? null, checksum: checksum ?? null,
+          status: source_kind === "remote_api" ? "ready" : "available",
+          metadata,
+        }, { onConflict: "tenant_id,provider,name" }).select().single();
+        if (error) return jsonResponse((console.error("[db_error]", error), { error: "Database operation failed" }), 500);
+        await audit("super_admin", "model.register", data.id, { name, provider, source_kind });
+        return jsonResponse({ model: data });
+      }
+
+      // status — lifecycle transition
+      if (sub === "status" && (req.method === "POST" || req.method === "PUT")) {
+        const { id, status, storage_path, checksum, size_bytes, error: failReason } = body || {};
+        if (!id || !status) return jsonResponse({ error: "id and status required" }, 400);
+        if (!MODEL_STATES.includes(status)) return jsonResponse({ error: `status must be one of ${MODEL_STATES.join(", ")}` }, 400);
+        const patch: any = { status };
+        if (storage_path !== undefined) patch.storage_path = storage_path;
+        if (checksum !== undefined) patch.checksum = checksum;
+        if (size_bytes !== undefined) patch.size_bytes = size_bytes;
+        if (failReason !== undefined) patch.metadata = { last_error: String(failReason).slice(0, 500) };
+        const { data, error } = await supabase.from("model_registry").update(patch).eq("id", id).select().single();
+        if (error) return jsonResponse((console.error("[db_error]", error), { error: "Database operation failed" }), 500);
+        await audit("super_admin", "model.status", id, { status });
+        return jsonResponse({ model: data });
+      }
+
+      // activate — only a genuinely installed/ready model, one active per tenant
+      if (sub === "activate" && req.method === "POST") {
+        const { id } = body || {};
+        if (!id) return jsonResponse({ error: "id required" }, 400);
+        const { data: m, error: ge } = await supabase.from("model_registry").select("*").eq("id", id).maybeSingle();
+        if (ge) return jsonResponse((console.error("[db_error]", ge), { error: "Database operation failed" }), 500);
+        if (!m) return jsonResponse({ error: "Model not found" }, 404);
+        if (m.source_kind === "downloadable" && (!RUNNABLE_STATES.includes(m.status) || !m.storage_path)) {
+          return jsonResponse({
+            error: "Model is not installed — download and install it before activation",
+            status: m.status,
+          }, 409);
+        }
+        if (m.source_kind === "remote_api" && !RUNNABLE_STATES.includes(m.status)) {
+          return jsonResponse({ error: "Remote model is not ready", status: m.status }, 409);
+        }
+        await supabase.from("model_registry").update({ is_active: false, status: "ready" })
+          .eq("tenant_id", m.tenant_id).eq("is_active", true);
+        const { data, error } = await supabase.from("model_registry")
+          .update({ is_active: true, status: "active" }).eq("id", id).select().single();
+        if (error) return jsonResponse((console.error("[db_error]", error), { error: "Database operation failed" }), 500);
+        await audit("super_admin", "model.activate", id, { name: m.name, provider: m.provider });
+        return jsonResponse({ model: data });
+      }
+
+      if (sub === "deactivate" && req.method === "POST") {
+        const { id } = body || {};
+        if (!id) return jsonResponse({ error: "id required" }, 400);
+        const { data, error } = await supabase.from("model_registry")
+          .update({ is_active: false, status: "inactive" }).eq("id", id).select().single();
+        if (error) return jsonResponse((console.error("[db_error]", error), { error: "Database operation failed" }), 500);
+        await audit("super_admin", "model.deactivate", id, {});
+        return jsonResponse({ model: data });
+      }
+
+      // delete — real artifact removal, then row removal. No fake deletes.
+      if (sub === "delete" && (req.method === "DELETE" || req.method === "POST")) {
+        const { id } = body || {};
+        if (!id) return jsonResponse({ error: "id required" }, 400);
+        const { data: m, error: ge } = await supabase.from("model_registry").select("*").eq("id", id).maybeSingle();
+        if (ge) return jsonResponse((console.error("[db_error]", ge), { error: "Database operation failed" }), 500);
+        if (!m) return jsonResponse({ error: "Model not found" }, 404);
+        await supabase.from("model_registry").update({ status: "deleting", is_active: false }).eq("id", id);
+
+        let artifactRemoved = false;
+        if (m.storage_path) {
+          const { error: se } = await supabase.storage.from("tivo-models").remove([m.storage_path]);
+          if (se) {
+            console.error("[storage_error]", se);
+            await supabase.from("model_registry").update({ status: "failed" }).eq("id", id);
+            await audit("super_admin", "model.delete_failed", id, { reason: "artifact_removal_failed" });
+            return jsonResponse({ error: "Stored model artifact could not be removed — model kept" }, 500);
+          }
+          artifactRemoved = true;
+        }
+        const { error: de } = await supabase.from("model_registry").delete().eq("id", id);
+        if (de) return jsonResponse((console.error("[db_error]", de), { error: "Database operation failed" }), 500);
+        await audit("super_admin", "model.delete", id, { name: m.name, artifact_removed: artifactRemoved });
+        return jsonResponse({ ok: true, artifact_removed: artifactRemoved });
+      }
+
+      return jsonResponse({ error: `Unknown models action: ${sub}` }, 404);
+    }
+
+    // ============================================================
+    // === CLOUD WEB RESEARCH (SSRF-safe public page fetch) ===
+    // Not a search API, no browser runtime. Returns title/text/url for citation.
+    // ============================================================
+    if (action === "research/fetch" && req.method === "POST") {
+      if (!isSA) return jsonResponse({ error: "Super Admin only" }, 403);
+      const target = String(body?.url || "");
+      const maxChars = Math.min(Number(body?.max_chars) || 20000, 40000);
+
+      let parsed: URL;
+      try { parsed = new URL(target); } catch { return jsonResponse({ error: "Invalid URL" }, 400); }
+      if (parsed.protocol !== "https:") return jsonResponse({ error: "Only https:// URLs are allowed" }, 400);
+      const host = parsed.hostname.toLowerCase().replace(/^\[|\]$/g, "");
+      const blockedHost =
+        host === "localhost" || host.endsWith(".localhost") || host.endsWith(".local") ||
+        host === "metadata.google.internal" || host.endsWith(".internal") ||
+        /^(0|10|127)\./.test(host) ||
+        /^169\.254\./.test(host) ||
+        /^192\.168\./.test(host) ||
+        /^172\.(1[6-9]|2\d|3[01])\./.test(host) ||
+        /^100\.(6[4-9]|[7-9]\d|1[01]\d|12[0-7])\./.test(host) ||
+        /^(::1?|fc|fd|fe80)/.test(host) ||
+        !host.includes(".");
+      if (blockedHost) return jsonResponse({ error: "Blocked host — private, internal and metadata addresses are not allowed" }, 400);
+
+      const ctrl = new AbortController();
+      const timer = setTimeout(() => ctrl.abort(), 12000);
+      try {
+        const r = await fetch(parsed.toString(), {
+          redirect: "error", // a redirect could hop to an internal address
+          signal: ctrl.signal,
+          headers: { "User-Agent": "TIVO-Research/1.0", Accept: "text/html,text/plain;q=0.9" },
+        });
+        if (!r.ok) return jsonResponse({ error: `Fetch failed — HTTP ${r.status}` }, 502);
+        const ctype = r.headers.get("content-type") || "";
+        if (!/text\/html|text\/plain|application\/xhtml/i.test(ctype)) {
+          return jsonResponse({ error: `Unsupported content-type: ${ctype || "unknown"}` }, 415);
+        }
+        const declared = Number(r.headers.get("content-length") || 0);
+        if (declared && declared > 3_000_000) return jsonResponse({ error: "Document too large" }, 413);
+
+        const raw = (await r.text()).slice(0, 3_000_000);
+        const title = (raw.match(/<title[^>]*>([\s\S]*?)<\/title>/i)?.[1] || parsed.hostname).trim().slice(0, 300);
+        const text = raw
+          .replace(/<script[\s\S]*?<\/script>/gi, " ")
+          .replace(/<style[\s\S]*?<\/style>/gi, " ")
+          .replace(/<noscript[\s\S]*?<\/noscript>/gi, " ")
+          .replace(/<[^>]+>/g, " ")
+          .replace(/&nbsp;/g, " ").replace(/&amp;/g, "&").replace(/&lt;/g, "<").replace(/&gt;/g, ">")
+          .replace(/\s+/g, " ")
+          .trim()
+          .slice(0, maxChars);
+
+        await audit("super_admin", "research.fetch", parsed.hostname, { url: parsed.toString(), chars: text.length });
+        return jsonResponse({
+          ok: true,
+          citation: { url: parsed.toString(), title, fetched_at: new Date().toISOString() },
+          title, url: parsed.toString(), text, truncated: text.length >= maxChars,
+        });
+      } catch (e) {
+        const msg = e instanceof Error && e.name === "AbortError" ? "Fetch timed out" : "Fetch failed";
+        return jsonResponse({ error: msg }, 504);
+      } finally {
+        clearTimeout(timer);
+      }
+    }
+
     // --- VECTOR MEMORY ---
     if (action === "memory/save" && req.method === "POST") {
       if (!supabase) return jsonResponse({ error: "DB unavailable" }, 503);
