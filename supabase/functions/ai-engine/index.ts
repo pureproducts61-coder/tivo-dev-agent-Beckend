@@ -723,12 +723,16 @@ Fix ALL remaining issues. Return JSON: {"score":0-100,"fixed_files":[{"path":"st
       });
     }
 
-    // === BUILD NATIVE (APK/EXE via HF Space) ===
+    // === BUILD NATIVE — OPTIONAL EXTERNAL ADAPTER ===
+    // Not part of TIVO's core Cloud path. The core AI/build workflow (chat, auto-build,
+    // web publish) never requires an external build host. This adapter only runs when
+    // the caller explicitly supplies its own external build URL.
     if (action === "build-native") {
       const { project_id, build_type, hf_space_url, app_name, package_name } = body;
       if (!project_id || !build_type) return jsonResponse({ error: "project_id and build_type required" }, 400);
-      if (!hf_space_url) return jsonResponse({ error: "hf_space_url required — HF Space URL where Docker build engine is deployed" }, 400);
-      if (!isSafeHfSpaceUrl(hf_space_url)) return jsonResponse({ error: "Invalid hf_space_url — must be https://<space>.hf.space" }, 400);
+      if (!hf_space_url) return jsonResponse({ error: "Native build is an optional external adapter — no external build host is configured, so APK/EXE build is unavailable. Web build/publish works without it." }, 400);
+      if (!isSafeHfSpaceUrl(hf_space_url)) return jsonResponse({ error: "Invalid external build host URL" }, 400);
+
 
       const sbResult = requireSupabase();
       if ("error" in sbResult) return sbResult.error;
