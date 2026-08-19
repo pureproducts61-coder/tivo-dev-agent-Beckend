@@ -5,14 +5,28 @@ import {
   Pencil, Trash2, BarChart3, Users, KeyRound, Sparkles, RotateCcw, Gauge,
 } from "lucide-react";
 
+/** Conceptual grouping for the project action menu. Optional — ungrouped
+ *  actions fall into "project" so existing callers keep working unchanged. */
+export type InputActionGroup = "tools" | "project" | "analytics" | "more";
+
 export interface InputAction {
   id: string;
   label: string;
   icon: any;
   desc?: string;
+  group?: InputActionGroup;
   onClick: () => void;
   tone?: "default" | "danger" | "primary";
 }
+
+const GROUP_ORDER: InputActionGroup[] = ["tools", "project", "analytics", "more"];
+const GROUP_LABEL: Record<InputActionGroup, string> = {
+  tools: "Tools",
+  project: "Project",
+  analytics: "Project analytics",
+  more: "More",
+};
+
 
 interface Props {
   value: string;
