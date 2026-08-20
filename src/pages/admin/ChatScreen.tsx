@@ -1,7 +1,8 @@
 import { useEffect, useRef, useState } from "react";
 import { useSuperAdmin } from "@/contexts/SuperAdminContext";
 import { ChatMessage, ChatMsg, Artifact, validateArtifact } from "@/components/chat/ChatMessage";
-import { ChatInput, ActionIcons } from "@/components/chat/ChatInput";
+import { ChatInput } from "@/components/chat/ChatInput";
+import { buildProjectActions } from "@/lib/projectActions";
 import { SecurityScanPanel } from "@/components/chat/SecurityScanPanel";
 import { VariablesPanel } from "@/components/admin/VariablesPanel";
 import { SuggestionChips } from "@/components/chat/SuggestionChips";
@@ -351,267 +352,24 @@ export default function ChatScreen() {
     setTimeout(() => send(newText), 0);
   }
 
-  async function withProject<T>(label: string, fn: (projectId: string) => Promise<T>): Promise<void> {
-    if (!session) return;
-    pushSystem(`⏳ ${label}…`);
-    try {
-      const { data: projects, error } = await supabase
+  // Project capabilities come from the shared single-source-of-truth layer —
+  // the Projects page ⋮ menu builds from the exact same factory.
+  const actions = buildProjectActions({
+    masterSecret: session?.masterSecret || "",
+    resolveProject: async () => {
+      const { data, error } = await supabase
         .from("projects")
         .select("id, name")
         .order("updated_at", { ascending: false })
         .limit(1);
       if (error) throw new Error(error.message);
-      const project = projects?.[0];
-      if (!project) {
-        pushSystem(`⚠️ ${label} cancelled — কোনো project নেই। প্রথমে Projects ট্যাবে একটা তৈরি করো।`);
-        return;
-      }
-      await fn(project.id);
-      pushSystem(`✅ ${label} — done (${project.name}).`);
-    } catch (e: any) {
-      pushSystem(`❌ ${label} failed: ${e?.message || "unknown error"}`);
-    }
-  }
-
-  async function backendCall(
-    fn: string,
-    path: string,
-    body: any,
-    method: "POST" | "GET" | "PUT" | "DELETE" = "POST",
-  ) {
-    if (!session) throw new Error("No session");
-    const res = await fetch(`${BACKEND}/functions/v1/${fn}/${path}`, {
-      method,
-      headers: { "Content-Type": "application/json", "x-master-secret": session.masterSecret },
-      body: method === "GET" ? undefined : JSON.stringify(body),
-    });
-    const data = await res.json().catch(() => ({}));
-    if (!res.ok) throw new Error(data?.error || `${path} → HTTP ${res.status}`);
-    return data;
-  }
-
-
-  const actions = [
-    {
-      id: "publish",
-      group: "project" as const,
-      label: "Publish",
-      icon: ActionIcons.Globe,
-      desc: "Push current build live",
-      tone: "primary" as const,
-      onClick: () =>
-        withProject("Publishing", async (id) => {
-          const data = await backendCall("project-manager", "publish", { project_id: id });
-          logAudit("project.publish", id, { public_url: data?.public_url });
-          if (data?.public_url) {
-            pushSystem(`🌐 Live: ${data.public_url}`, [
-              { name: "Open live site", url: data.public_url, mime: "text/html" },
-            ]);
-          }
-        }),
+      return data?.[0] ?? null;
     },
-    {
-      id: "update",
-      group: "tools" as const,
-      label: "Update & Rebuild",
-      icon: ActionIcons.RefreshCw,
-      desc: "Trigger a fresh build",
-      onClick: () =>
-        withProject("Rebuilding", async (id) => {
-          // project-manager exposes `update` as PUT — method must match or the
-          // rebuild silently 404s.
-          await backendCall("project-manager", "update", { id, build_status: "queued" }, "PUT");
-          logAudit("project.update", id, { build_status: "queued" });
-        }),
-    },
-    {
-      id: "history",
-      group: "project" as const,
-      label: "Version History",
-      icon: ActionIcons.History,
-      desc: "Recent snapshots",
-      onClick: () =>
-        withProject("Loading history", async (id) => {
-          const data = await backendCall("project-manager", `versions?id=${id}`, null, "GET");
-          const versions = (data?.versions || data?.items || []).slice(0, 5);
-          if (!versions.length) {
-            pushSystem("📜 কোনো version snapshot এখনো নেই।");
-            return;
-          }
-          pushSystem(
-            "📜 Latest versions:\n" +
-              versions.map((v: any, i: number) => `${i + 1}. ${v.label || v.id} — ${v.created_at || ""}`).join("\n")
-          );
-        }),
-    },
-    {
-      id: "share",
-      group: "project" as const,
-      label: "Share Link",
-      icon: ActionIcons.Share2,
-      desc: "Copy public URL",
-      onClick: () =>
-        withProject("Generating share link", async (id) => {
-          const { data } = await supabase.from("projects").select("public_url").eq("id", id).maybeSingle();
-          const url = data?.public_url || `${window.location.origin}/projects/${id}`;
-          await navigator.clipboard?.writeText(url);
-          pushSystem(`🔗 Copied to clipboard: ${url}`);
-        }),
-    },
-    {
-      id: "files",
-      group: "project" as const,
-      label: "Project Files",
-      icon: ActionIcons.Folder,
-      desc: "Browse files in tab",
-      onClick: () => window.location.assign("/super-admin/app/projects"),
-    },
-    {
-      id: "download",
-      group: "project" as const,
-      label: "Download ZIP",
-      icon: ActionIcons.Download,
-      desc: "Export project bundle",
-      onClick: () =>
-        withProject("Preparing download", async (id) => {
-          const data = await backendCall("project-manager", `download?id=${id}`, null, "GET");
-          const url = data?.url || data?.download_url;
-          if (url) {
-            pushSystem("📦 Bundle ready.", [
-              { name: `${data?.name || "project"}.zip`, url, mime: "application/zip", size: data?.size },
-            ]);
-          } else if (data?.base64) {
-            pushSystem("📦 Bundle ready.", [
-              { name: `${data?.name || "project"}.zip`, base64: data.base64, mime: "application/zip" },
-            ]);
-          } else {
-            throw new Error("No download URL returned");
-          }
-        }),
-    },
-    {
-      id: "preview",
-      group: "tools" as const,
-      label: "Open Preview",
-      icon: ActionIcons.Eye,
-      desc: "Live preview in new tab",
-      onClick: () =>
-        withProject("Opening preview", async (id) => {
-          // Must open the SELECTED project's real preview URL — never the TIVO root
-          // and never a fabricated URL.
-          const { data, error } = await supabase
-            .from("projects")
-            .select("public_url")
-            .eq("id", id)
-            .maybeSingle();
-          if (error) throw new Error(error.message);
-          const url = data?.public_url?.trim();
-          if (!url) {
-            throw new Error(
-              "এই project-এর কোনো preview URL নেই — আগে Publish করো, তারপর preview খোলা যাবে।",
-            );
-          }
-          window.open(url, "_blank", "noopener");
-        }),
-    },
-
-    {
-      id: "security",
-      group: "tools" as const,
-      label: "Security Scan",
-      icon: ActionIcons.ShieldCheck,
-      desc: "Scan & fix vulnerabilities",
-      onClick: () => setScanOpen(true),
-    },
-    {
-      id: "variables",
-      group: "tools" as const,
-      label: "AI Variables",
-      icon: ActionIcons.KeyRound,
-      desc: "Key/Value AI access",
-      onClick: () => setVarsOpen(true),
-    },
-    {
-      id: "rename",
-      group: "project" as const,
-      label: "Rename Project",
-      icon: ActionIcons.Pencil,
-      desc: "Edit project name",
-      onClick: () =>
-        withProject("Renaming", async (id) => {
-          const name = window.prompt("নতুন project name:");
-          if (!name?.trim()) throw new Error("Cancelled");
-          const { error } = await supabase.from("projects").update({ name: name.trim() }).eq("id", id);
-          if (error) throw new Error(error.message);
-          logAudit("project.rename", id, { name: name.trim() });
-        }),
-    },
-    {
-      id: "analytics",
-      group: "analytics" as const,
-      label: "Analytics",
-      icon: ActionIcons.BarChart3,
-      desc: "Build & deploy metrics",
-      onClick: () =>
-        withProject("Loading analytics", async (id) => {
-          const data = await backendCall("project-manager", `analytics?id=${id}`, null, "GET").catch(() => null);
-          pushSystem("📊 Analytics:\n```json\n" + JSON.stringify(data ?? { note: "no data" }, null, 2) + "\n```");
-        }),
-    },
-    {
-      id: "visitors",
-      group: "analytics" as const,
-      label: "Visitors",
-      icon: ActionIcons.Users,
-      desc: "Live visitor stats",
-      onClick: () =>
-        withProject("Fetching visitors", async (id) => {
-          const data = await backendCall("project-manager", `visitors?id=${id}`, null, "GET").catch(() => null);
-          pushSystem("👥 Visitors:\n```json\n" + JSON.stringify(data ?? { note: "no data" }, null, 2) + "\n```");
-        }),
-    },
-    {
-      id: "performance",
-      group: "analytics" as const,
-      label: "Performance",
-      icon: ActionIcons.Gauge,
-      desc: "Speed & uptime",
-      onClick: () =>
-        withProject("Profiling", async (id) => {
-          const data = await backendCall("project-manager", `performance?id=${id}`, null, "GET").catch(() => null);
-          pushSystem("⚡ Performance:\n```json\n" + JSON.stringify(data ?? { note: "no data" }, null, 2) + "\n```");
-        }),
-    },
-    {
-      id: "reopen",
-      group: "more" as const,
-      label: "Reopen Project",
-      icon: ActionIcons.RotateCcw,
-      desc: "Restore archived project",
-      onClick: () =>
-        withProject("Reopening", async (id) => {
-          const { error } = await supabase.from("projects").update({ archived: false } as any).eq("id", id);
-          if (error) throw new Error(error.message);
-          logAudit("project.reopen", id);
-        }),
-    },
-    {
-      id: "delete",
-      group: "more" as const,
-      label: "Delete Project",
-      icon: ActionIcons.Trash2,
-      desc: "Permanently remove",
-      tone: "danger" as const,
-      onClick: () =>
-        withProject("Deleting", async (id) => {
-          if (!confirm("সত্যিই delete করবে? এটা undo করা যাবে না।")) throw new Error("Cancelled");
-          // Canonical secure path: project-manager verifies ownership/super-admin
-          // and removes the project's storage artifacts before deleting the row.
-          await backendCall("project-manager", "delete", { id }, "DELETE");
-          logAudit("project.delete", id);
-        }),
-    },
-  ];
+    report: (msg, artifacts) => pushSystem(msg, artifacts),
+    openSecurityScan: () => setScanOpen(true),
+    openVariables: () => setVarsOpen(true),
+    openFiles: () => window.location.assign("/super-admin/app/projects"),
+  });
 
   // Wire feedback + assistant metadata
   function handleFeedback(id: string, value: "up" | "down") {

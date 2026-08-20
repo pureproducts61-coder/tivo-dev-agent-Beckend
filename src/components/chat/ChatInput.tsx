@@ -19,8 +19,8 @@ export interface InputAction {
   tone?: "default" | "danger" | "primary";
 }
 
-const GROUP_ORDER: InputActionGroup[] = ["tools", "project", "analytics", "more"];
-const GROUP_LABEL: Record<InputActionGroup, string> = {
+export const GROUP_ORDER: InputActionGroup[] = ["tools", "project", "analytics", "more"];
+export const GROUP_LABEL: Record<InputActionGroup, string> = {
   tools: "Tools",
   project: "Project",
   analytics: "Project analytics",
