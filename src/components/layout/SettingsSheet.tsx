@@ -1,5 +1,6 @@
 import { useEffect, useState } from "react";
 import { Link } from "react-router-dom";
+import { supabase } from "@/integrations/supabase/client";
 import { useSuperAdmin } from "@/contexts/SuperAdminContext";
 import { PROVIDER_REGISTRY, type CredentialKey } from "@/lib/providers";
 
@@ -8,7 +9,7 @@ const BACKEND = import.meta.env.VITE_SUPABASE_URL;
 const SS_KEY = "tivo_hybrid_settings";
 const LEGACY_LS_KEY = "tivo_hybrid_settings";
 
-type Mode = "cloud" | "hybrid" | "local";
+type Mode = "cloud" | "hybrid" | "local" | "offline";
 
 /** Provider keys are stored under their canonical credential key (see src/lib/providers.ts). */
 type ProviderKeys = Partial<Record<CredentialKey, string>>;
@@ -49,13 +50,46 @@ function migrate(raw: string): Settings {
   return out as unknown as Settings;
 }
 
+type SectionId = "general" | "ai" | "runtime" | "credentials" | "security" | "storage" | "advanced";
 
-export function SettingsSheet({ open, onClose }: { open: boolean; onClose: () => void }) {
+const SECTIONS: { id: SectionId; label: string }[] = [
+  { id: "general", label: "General" },
+  { id: "ai", label: "AI" },
+  { id: "runtime", label: "Runtime" },
+  { id: "credentials", label: "Credentials" },
+  { id: "security", label: "Security" },
+  { id: "storage", label: "Storage" },
+  { id: "advanced", label: "Advanced" },
+];
+
+const Card = ({ title, children }: { title: string; children: React.ReactNode }) => (
+  <section className="rounded-xl border border-zinc-800 p-3 space-y-2">
+    <div className="text-xs text-zinc-400">{title}</div>
+    {children}
+  </section>
+);
+
+export function SettingsSheet({
+  open,
+  onClose,
+  section = "general",
+}: {
+  open: boolean;
+  onClose: () => void;
+  section?: string;
+}) {
   const { session } = useSuperAdmin();
   const [s, setS] = useState<Settings>(DEFAULTS);
+  const [tab, setTab] = useState<SectionId>("general");
   const [savedFlash, setSavedFlash] = useState(false);
   const [testing, setTesting] = useState<string | null>(null);
   const [results, setResults] = useState<Record<string, "ok" | "fail" | undefined>>({});
+  const [constitution, setConstitution] = useState<string | null>(null);
+
+  useEffect(() => {
+    const valid = SECTIONS.some((x) => x.id === section);
+    setTab((valid ? section : "general") as SectionId);
+  }, [section, open]);
 
   useEffect(() => {
     try {
@@ -71,6 +105,17 @@ export function SettingsSheet({ open, onClose }: { open: boolean; onClose: () =>
       if (raw) setS(migrate(raw));
     } catch {}
   }, [open]);
+
+  // Canonical constitution lives in the DB — read-only preview here.
+  useEffect(() => {
+    if (!open || tab !== "ai" || constitution !== null) return;
+    supabase
+      .from("ai_constitution")
+      .select("content")
+      .limit(1)
+      .maybeSingle()
+      .then(({ data }) => setConstitution((data as any)?.content ?? ""));
+  }, [open, tab, constitution]);
 
   if (!open) return null;
 
@@ -111,6 +156,9 @@ export function SettingsSheet({ open, onClose }: { open: boolean; onClose: () =>
     setTimeout(() => setSavedFlash(false), 1200);
   }
 
+  const linkCls =
+    "py-2 rounded-lg bg-zinc-900 border border-zinc-800 text-center hover:border-amber-700";
+
   return (
     <div className="fixed inset-0 z-50" onClick={onClose}>
       <div className="absolute inset-0 bg-black/60" />
@@ -123,99 +171,181 @@ export function SettingsSheet({ open, onClose }: { open: boolean; onClose: () =>
           <button onClick={onClose} className="text-zinc-400 hover:text-zinc-100">✕</button>
         </div>
 
-        <div className="flex-1 overflow-y-auto p-4 space-y-5 text-sm">
-          {/* Tools (moved out of hamburger to avoid duplicates) */}
-          <section className="rounded-xl border border-zinc-800 p-3 space-y-2">
-            <div className="text-xs text-zinc-400">Tools</div>
-            <div className="grid grid-cols-2 gap-2 text-[11px]">
-              <Link onClick={onClose} to="/super-admin/app/system" className="py-2 rounded-lg bg-zinc-900 border border-zinc-800 text-center hover:border-amber-700">⚙️ System</Link>
-              <Link onClick={onClose} to="/super-admin/workspace" className="py-2 rounded-lg bg-zinc-900 border border-zinc-800 text-center hover:border-amber-700">🤖 AI Workspace</Link>
-              <Link onClick={onClose} to="/super-admin/dashboard" className="py-2 rounded-lg bg-zinc-900 border border-zinc-800 text-center hover:border-amber-700">📊 Dashboard</Link>
-              <Link onClick={onClose} to="/super-admin/debug" className="py-2 rounded-lg bg-zinc-900 border border-zinc-800 text-center hover:border-amber-700">🔧 Debug</Link>
-            </div>
-          </section>
+        {/* Section tabs — one canonical settings surface, no scattered tool lists */}
+        <div className="flex gap-1.5 overflow-x-auto px-3 py-2 border-b border-zinc-900 shrink-0">
+          {SECTIONS.map((x) => (
+            <button
+              key={x.id}
+              onClick={() => setTab(x.id)}
+              className={`px-2.5 py-1 rounded-full text-[11px] whitespace-nowrap border transition ${
+                tab === x.id
+                  ? "bg-amber-700 border-amber-600 text-white"
+                  : "bg-zinc-900 border-zinc-800 text-zinc-400 hover:text-zinc-200"
+              }`}
+            >
+              {x.label}
+            </button>
+          ))}
+        </div>
 
-          {/* Mode */}
-          <section className="rounded-xl border border-zinc-800 p-3 space-y-2">
-            <div className="text-xs text-zinc-400">Runtime Mode</div>
-            <div className="grid grid-cols-3 gap-2">
-              {(["cloud", "hybrid", "local"] as Mode[]).map((m) => (
-                <button
-                  key={m}
-                  onClick={() => setS({ ...s, mode: m })}
-                  className={`py-2 rounded-lg text-xs border transition ${
-                    s.mode === m
-                      ? "bg-amber-700 border-amber-600 text-white"
-                      : "bg-zinc-900 border-zinc-800 text-zinc-300"
-                  }`}
-                >
-                  {m}
-                </button>
-              ))}
-            </div>
-            <p className="text-[11px] text-zinc-500">
-              <b>cloud</b>: সব backend দিয়ে · <b>hybrid</b>: login cloud, AI device key · <b>local</b>: পুরোটাই device-এ
-            </p>
-            <label className="flex items-center gap-2 text-xs text-zinc-300 pt-1">
-              <input
-                type="checkbox"
-                checked={s.useCloudKeys}
-                onChange={(e) => setS({ ...s, useCloudKeys: e.target.checked })}
-              />
-              Cloud secrets fallback (device key খালি থাকলে cloud থেকে নিবে)
-            </label>
-          </section>
-
-          {/* Magic link redirect */}
-          <section className="rounded-xl border border-zinc-800 p-3 space-y-2">
-            <div className="text-xs text-zinc-400">Magic Link Redirect URL</div>
-            <div className="flex gap-2">
-              <input
-                value={s.redirectUrl}
-                onChange={(e) => setS({ ...s, redirectUrl: e.target.value })}
-                className="flex-1 px-2.5 py-1.5 rounded-lg bg-zinc-900 border border-zinc-800 text-xs"
-              />
-              <button onClick={copyRedirect} className="px-3 py-1.5 rounded-lg bg-zinc-800 text-xs">
-                Copy
-              </button>
-            </div>
-            <p className="text-[11px] text-zinc-500">
-              Supabase Dashboard → Authentication → URL Configuration → Redirect URLs-এ paste করো।
-            </p>
-          </section>
-
-          {/* Provider keys */}
-          <section className="rounded-xl border border-zinc-800 p-3 space-y-3">
-            <div className="text-xs text-zinc-400">Provider Keys (tab-only, sessionStorage)</div>
-            <p className="text-[11px] text-amber-400/90">⚠️ Tab বন্ধ করলে keys মুছে যাবে — শেয়ার্ড ডিভাইসে keys rotate করুন।</p>
-            {PROVIDERS.map((p) => (
-              <div key={p.key} className="space-y-1">
-                <div className="flex items-center justify-between">
-                  <span className="text-xs text-zinc-300">{p.label}</span>
-                  {results[p.key] === "ok" && <span className="text-green-500 text-[11px]">✓ OK</span>}
-                  {results[p.key] === "fail" && <span className="text-red-500 text-[11px]">✕ Fail</span>}
-                </div>
+        <div className="flex-1 overflow-y-auto p-4 space-y-4 text-sm">
+          {tab === "general" && (
+            <>
+              <Card title="Super Admin">
+                <div className="text-xs text-zinc-300 truncate">{session?.email || "—"}</div>
+                <p className="text-[11px] text-zinc-500">Tab-scoped session · 8 ঘন্টা পরে auto logout।</p>
+              </Card>
+              <Card title="Magic Link Redirect URL">
                 <div className="flex gap-2">
                   <input
-                    type="password"
-                    value={s[p.key] ?? ""}
-                    placeholder={p.placeholder}
-                    onChange={(e) => setS({ ...s, [p.key]: e.target.value })}
+                    value={s.redirectUrl}
+                    onChange={(e) => setS({ ...s, redirectUrl: e.target.value })}
                     className="flex-1 px-2.5 py-1.5 rounded-lg bg-zinc-900 border border-zinc-800 text-xs"
                   />
-                  <button
-                    disabled={testing === p.key}
-                    onClick={() => testConnection(p.key, s[p.key] ?? "")}
-                    className="px-2.5 py-1.5 rounded-lg bg-zinc-800 text-xs disabled:opacity-50"
-                  >
-                    {testing === p.key ? "..." : "Test"}
+                  <button onClick={copyRedirect} className="px-3 py-1.5 rounded-lg bg-zinc-800 text-xs">
+                    Copy
                   </button>
                 </div>
-                <p className="text-[10px] text-zinc-600">{p.key} · {p.help}</p>
-              </div>
-            ))}
+                <p className="text-[11px] text-zinc-500">
+                  Auth settings-এ Redirect URL হিসেবে এটি যোগ করো।
+                </p>
+              </Card>
+            </>
+          )}
 
-          </section>
+          {tab === "ai" && (
+            <>
+              <Card title="Models">
+                <p className="text-[11px] text-zinc-500">
+                  Model Manager (register / activate / delete) backend প্রস্তুত; UI এখানে আসবে।
+                </p>
+              </Card>
+              <Card title="Providers">
+                <p className="text-[11px] text-zinc-500">
+                  Provider keys Credentials ট্যাবে — এখানে ডুপ্লিকেট নেই।
+                </p>
+                <button
+                  onClick={() => setTab("credentials")}
+                  className="w-full py-2 rounded-lg bg-zinc-900 border border-zinc-800 text-xs hover:border-amber-700"
+                >
+                  Open Credentials →
+                </button>
+              </Card>
+              <Card title="Routing">
+                <p className="text-[11px] text-zinc-500">
+                  Cloud AI Gateway default; device key থাকলে সেটি আগে ব্যবহার হয় (Runtime mode অনুযায়ী)।
+                </p>
+              </Card>
+              <Card title="AI Constitution (read-only)">
+                <pre className="text-[10px] text-zinc-400 whitespace-pre-wrap max-h-40 overflow-y-auto">
+                  {constitution === null ? "Loading…" : constitution || "DB-তে constitution পাওয়া যায়নি — fallback ব্যবহার হচ্ছে।"}
+                </pre>
+              </Card>
+            </>
+          )}
+
+          {tab === "runtime" && (
+            <Card title="Runtime Mode">
+              <div className="grid grid-cols-4 gap-2">
+                {(["cloud", "hybrid", "local", "offline"] as Mode[]).map((m) => (
+                  <button
+                    key={m}
+                    onClick={() => setS({ ...s, mode: m })}
+                    className={`py-2 rounded-lg text-[11px] border transition ${
+                      s.mode === m
+                        ? "bg-amber-700 border-amber-600 text-white"
+                        : "bg-zinc-900 border-zinc-800 text-zinc-300"
+                    }`}
+                  >
+                    {m}
+                  </button>
+                ))}
+              </div>
+              <p className="text-[11px] text-zinc-500">
+                <b>cloud</b>: সব backend দিয়ে · <b>hybrid</b>: login cloud, AI device key · <b>local</b>: পুরোটাই device-এ · <b>offline</b>: শুধু cached data
+              </p>
+              <label className="flex items-center gap-2 text-xs text-zinc-300 pt-1">
+                <input
+                  type="checkbox"
+                  checked={s.useCloudKeys}
+                  onChange={(e) => setS({ ...s, useCloudKeys: e.target.checked })}
+                />
+                Cloud secrets fallback (device key খালি থাকলে cloud থেকে নিবে)
+              </label>
+            </Card>
+          )}
+
+          {tab === "credentials" && (
+            <Card title="Provider Keys (tab-only, sessionStorage)">
+              <p className="text-[11px] text-amber-400/90">⚠️ Tab বন্ধ করলে keys মুছে যাবে — শেয়ার্ড ডিভাইসে keys rotate করুন।</p>
+              {PROVIDERS.map((p) => (
+                <div key={p.key} className="space-y-1 pt-2">
+                  <div className="flex items-center justify-between">
+                    <span className="text-xs text-zinc-300">{p.label}</span>
+                    {results[p.key] === "ok" && <span className="text-green-500 text-[11px]">✓ OK</span>}
+                    {results[p.key] === "fail" && <span className="text-red-500 text-[11px]">✕ Fail</span>}
+                  </div>
+                  <div className="flex gap-2">
+                    <input
+                      type="password"
+                      value={s[p.key] ?? ""}
+                      placeholder={p.placeholder}
+                      onChange={(e) => setS({ ...s, [p.key]: e.target.value })}
+                      className="flex-1 px-2.5 py-1.5 rounded-lg bg-zinc-900 border border-zinc-800 text-xs"
+                    />
+                    <button
+                      disabled={testing === p.key}
+                      onClick={() => testConnection(p.key, s[p.key] ?? "")}
+                      className="px-2.5 py-1.5 rounded-lg bg-zinc-800 text-xs disabled:opacity-50"
+                    >
+                      {testing === p.key ? "..." : "Test"}
+                    </button>
+                  </div>
+                  <p className="text-[10px] text-zinc-600">{p.key} · {p.help}</p>
+                </div>
+              ))}
+            </Card>
+          )}
+
+          {tab === "security" && (
+            <>
+              <Card title="Security status">
+                <ul className="space-y-1 list-disc list-inside text-[11px] text-zinc-500">
+                  <li>RLS enabled on all sensitive tables (deny-all default)</li>
+                  <li>Super Admin lock: email + master secret required</li>
+                  <li>Backend rate limiting active (60 req/min)</li>
+                  <li>Project ownership verified server-side for update/delete/publish</li>
+                </ul>
+              </Card>
+              <Card title="Diagnostics">
+                <Link onClick={onClose} to="/super-admin/debug" className={`block ${linkCls} text-xs`}>
+                  🔧 Debug &amp; health
+                </Link>
+              </Card>
+            </>
+          )}
+
+          {tab === "storage" && (
+            <Card title="Storage">
+              <p className="text-[11px] text-zinc-500">
+                Project artifacts ও model files Cloud storage-এ থাকে। Download link গুলো signed URL (1 ঘণ্টা TTL)।
+              </p>
+            </Card>
+          )}
+
+          {tab === "advanced" && (
+            <Card title="Legacy tools">
+              <div className="grid grid-cols-2 gap-2 text-[11px]">
+                <Link onClick={onClose} to="/super-admin/app/system" className={linkCls}>⚙️ System</Link>
+                <Link onClick={onClose} to="/super-admin/workspace" className={linkCls}>🤖 AI Workspace</Link>
+                <Link onClick={onClose} to="/super-admin/dashboard" className={linkCls}>📊 Dashboard</Link>
+                <Link onClick={onClose} to="/super-admin/app/users" className={linkCls}>👥 Users</Link>
+              </div>
+              <p className="text-[11px] text-zinc-600">
+                এই screen গুলো compatibility-এর জন্য রাখা — primary navigation-এ নেই।
+              </p>
+            </Card>
+          )}
         </div>
 
         <div className="p-4 border-t border-zinc-800">
