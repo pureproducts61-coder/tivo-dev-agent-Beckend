@@ -1,7 +1,7 @@
-import { ReactNode, useState } from "react";
+import { ReactNode, useEffect, useState } from "react";
 import { NavLink, Outlet, useNavigate } from "react-router-dom";
 import {
-  MessageSquare, FolderKanban, Users, CheckSquare,
+  MessageSquare, FolderKanban, CheckSquare, History, Hammer, Activity as ActivityIcon, Cpu,
   Bell, Settings as SettingsIcon, Menu, LogOut, PanelLeftClose, PanelLeft, Trash2,
 } from "lucide-react";
 import { useSuperAdmin } from "@/contexts/SuperAdminContext";
@@ -14,9 +14,21 @@ import { Petals } from "./Petals";
 // "System" removed — reachable from the Settings (⚙️) gear only.
 const NAV_PRIMARY = [
   { to: "/super-admin/app/chats", icon: MessageSquare, label: "Chat" },
-  { to: "/super-admin/app/approvals", icon: CheckSquare, label: "Approvals" },
+  { to: "/super-admin/app/conversations", icon: History, label: "Chat History" },
   { to: "/super-admin/app/projects", icon: FolderKanban, label: "Projects" },
-  { to: "/super-admin/app/users", icon: Users, label: "Users" },
+  { to: "/super-admin/app/builds", icon: Hammer, label: "Builds" },
+  { to: "/super-admin/app/activity", icon: ActivityIcon, label: "Activity" },
+  { to: "/super-admin/app/approvals", icon: CheckSquare, label: "Approvals" },
+];
+
+/** Opens the canonical Settings sheet on a given section (no duplicate screens). */
+function openSettings(section: string) {
+  window.dispatchEvent(new CustomEvent("tivo:open-settings", { detail: section }));
+}
+
+const NAV_SETTINGS = [
+  { icon: Cpu, label: "AI Models", section: "ai" },
+  { icon: SettingsIcon, label: "Settings", section: "general" },
 ];
 
 function SidebarItem({ to, icon: Icon, label, collapsed }: any) {
@@ -62,6 +74,20 @@ function DesktopSidebar({ collapsed, setCollapsed }: { collapsed: boolean; setCo
           {!collapsed && <div className="px-2 pt-1 pb-1 text-[10px] uppercase tracking-widest text-zinc-600">Workspace</div>}
           {NAV_PRIMARY.map((i) => (
             <SidebarItem key={i.to} {...i} collapsed={collapsed} />
+          ))}
+        </div>
+        <div className="space-y-0.5">
+          {!collapsed && <div className="px-2 pb-1 text-[10px] uppercase tracking-widest text-zinc-600">Configure</div>}
+          {NAV_SETTINGS.map((i) => (
+            <button
+              key={i.section}
+              onClick={() => openSettings(i.section)}
+              title={collapsed ? i.label : undefined}
+              className="w-full group flex items-center gap-3 px-2.5 py-2 rounded-lg text-sm text-zinc-400 hover:text-zinc-100 hover:bg-zinc-900"
+            >
+              <i.icon className="w-4 h-4 shrink-0" />
+              {!collapsed && <span className="truncate">{i.label}</span>}
+            </button>
           ))}
         </div>
         {/* Legacy tools moved into Settings gear — no duplicates here. */}
@@ -121,6 +147,19 @@ function MobileDrawer({ open, onClose }: { open: boolean; onClose: () => void })
                 <i.icon className="w-4 h-4" />
                 {i.label}
               </NavLink>
+            ))}
+          </div>
+          <div>
+            <div className="px-2 pb-1 text-[10px] uppercase tracking-widest text-zinc-600">Configure</div>
+            {NAV_SETTINGS.map((i) => (
+              <button
+                key={i.section}
+                onClick={() => { onClose(); openSettings(i.section); }}
+                className="w-full flex items-center gap-3 px-2.5 py-2 rounded-lg text-sm text-zinc-300 hover:bg-zinc-900"
+              >
+                <i.icon className="w-4 h-4" />
+                {i.label}
+              </button>
             ))}
           </div>
           {/* Legacy tools moved into Settings gear — no duplicates here. */}
@@ -226,6 +265,16 @@ export function AppShell({ children }: { children?: ReactNode }) {
   const [drawer, setDrawer] = useState(false);
   const [alertsOpen, setAlertsOpen] = useState(false);
   const [settingsOpen, setSettingsOpen] = useState(false);
+  const [settingsSection, setSettingsSection] = useState("general");
+
+  useEffect(() => {
+    const h = (e: Event) => {
+      setSettingsSection(String((e as CustomEvent).detail || "general"));
+      setSettingsOpen(true);
+    };
+    window.addEventListener("tivo:open-settings", h);
+    return () => window.removeEventListener("tivo:open-settings", h);
+  }, []);
   const { unreadCount } = useAlerts();
 
   if (!session) {
@@ -270,7 +319,7 @@ export function AppShell({ children }: { children?: ReactNode }) {
                 )}
               </button>
               <button
-                onClick={() => setSettingsOpen(true)}
+                onClick={() => { setSettingsSection("general"); setSettingsOpen(true); }}
                 className="p-2 rounded-lg hover:bg-zinc-900"
                 aria-label="Settings"
               >
@@ -285,7 +334,7 @@ export function AppShell({ children }: { children?: ReactNode }) {
 
       <MobileDrawer open={drawer} onClose={() => setDrawer(false)} />
       <AlertsPanel open={alertsOpen} onClose={() => setAlertsOpen(false)} />
-      <SettingsSheet open={settingsOpen} onClose={() => setSettingsOpen(false)} />
+      <SettingsSheet open={settingsOpen} section={settingsSection} onClose={() => setSettingsOpen(false)} />
     </div>
   );
 }
