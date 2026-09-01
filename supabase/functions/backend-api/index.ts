@@ -1000,9 +1000,9 @@ serve(async (req) => {
         await supabase.from("model_registry").update({ is_active: false, status: "ready" })
           .eq("tenant_id", m.tenant_id).eq("is_active", true);
         const { data, error } = await supabase.from("model_registry")
-          .update({ is_active: true, status: "active" }).eq("id", id).select().single();
+          .update({ is_active: true, status: "active", installed: true }).eq("id", id).select().single();
         if (error) return jsonResponse((console.error("[db_error]", error), { error: "Database operation failed" }), 500);
-        await audit("super_admin", "model.activate", id, { name: m.name, provider: m.provider });
+        await audit("super_admin", "MODEL_ACTIVATED", id, { name: m.name, provider: m.provider, event: "model.activate" });
         return jsonResponse({ model: data });
       }
 
@@ -1012,7 +1012,7 @@ serve(async (req) => {
         const { data, error } = await supabase.from("model_registry")
           .update({ is_active: false, status: "inactive" }).eq("id", id).select().single();
         if (error) return jsonResponse((console.error("[db_error]", error), { error: "Database operation failed" }), 500);
-        await audit("super_admin", "model.deactivate", id, {});
+        await audit("super_admin", "MODEL_DEACTIVATED", id, { event: "model.deactivate" });
         return jsonResponse({ model: data });
       }
 
@@ -1038,7 +1038,7 @@ serve(async (req) => {
         }
         const { error: de } = await supabase.from("model_registry").delete().eq("id", id);
         if (de) return jsonResponse((console.error("[db_error]", de), { error: "Database operation failed" }), 500);
-        await audit("super_admin", "model.delete", id, { name: m.name, artifact_removed: artifactRemoved });
+        await audit("super_admin", "MODEL_DELETED", id, { name: m.name, artifact_removed: artifactRemoved, event: "model.delete" });
         return jsonResponse({ ok: true, artifact_removed: artifactRemoved });
       }
 
