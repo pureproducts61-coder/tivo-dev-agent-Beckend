@@ -432,67 +432,100 @@ export type Database = {
       }
       model_registry: {
         Row: {
+          architecture: string | null
+          capabilities: string[]
           checksum: string | null
+          context_window: number | null
           created_at: string
+          description: string | null
+          display_name: string | null
           download_url: string | null
           format: string | null
           id: string
+          installed: boolean
           is_active: boolean
           metadata: Json
+          model_identifier: string | null
           name: string
+          parameter_size: string | null
           platforms: string[]
           provider: string
           quantization: string | null
+          recommended_ram_mb: number | null
           required_ram_mb: number | null
           size_bytes: number | null
           source_kind: string
+          source_url: string | null
           status: string
           storage_path: string | null
           supported_runtimes: string[]
           tenant_id: string
           updated_at: string
+          version: string | null
         }
         Insert: {
+          architecture?: string | null
+          capabilities?: string[]
           checksum?: string | null
+          context_window?: number | null
           created_at?: string
+          description?: string | null
+          display_name?: string | null
           download_url?: string | null
           format?: string | null
           id?: string
+          installed?: boolean
           is_active?: boolean
           metadata?: Json
+          model_identifier?: string | null
           name: string
+          parameter_size?: string | null
           platforms?: string[]
           provider: string
           quantization?: string | null
+          recommended_ram_mb?: number | null
           required_ram_mb?: number | null
           size_bytes?: number | null
           source_kind?: string
+          source_url?: string | null
           status?: string
           storage_path?: string | null
           supported_runtimes?: string[]
           tenant_id?: string
           updated_at?: string
+          version?: string | null
         }
         Update: {
+          architecture?: string | null
+          capabilities?: string[]
           checksum?: string | null
+          context_window?: number | null
           created_at?: string
+          description?: string | null
+          display_name?: string | null
           download_url?: string | null
           format?: string | null
           id?: string
+          installed?: boolean
           is_active?: boolean
           metadata?: Json
+          model_identifier?: string | null
           name?: string
+          parameter_size?: string | null
           platforms?: string[]
           provider?: string
           quantization?: string | null
+          recommended_ram_mb?: number | null
           required_ram_mb?: number | null
           size_bytes?: number | null
           source_kind?: string
+          source_url?: string | null
           status?: string
           storage_path?: string | null
           supported_runtimes?: string[]
           tenant_id?: string
           updated_at?: string
+          version?: string | null
         }
         Relationships: []
       }
