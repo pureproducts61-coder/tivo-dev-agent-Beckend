@@ -799,6 +799,8 @@ serve(async (req) => {
         const {
           name, provider, source_kind = "remote_api", format, size_bytes, required_ram_mb,
           supported_runtimes = [], platforms = [], quantization, download_url, checksum, metadata = {},
+          display_name, model_identifier, version, architecture, parameter_size,
+          recommended_ram_mb, context_window, capabilities = [], source_url, description,
         } = body || {};
         if (!name || !provider) return jsonResponse({ error: "name and provider required" }, 400);
         if (!["remote_api", "downloadable"].includes(source_kind)) {
@@ -814,12 +816,154 @@ serve(async (req) => {
           supported_runtimes, platforms, quantization: quantization ?? null,
           download_url: download_url ?? null, checksum: checksum ?? null,
           status: source_kind === "remote_api" ? "ready" : "available",
+          installed: source_kind === "remote_api",
+          display_name: display_name ?? name,
+          model_identifier: model_identifier ?? name,
+          version: version ?? null, architecture: architecture ?? null,
+          parameter_size: parameter_size ?? null,
+          recommended_ram_mb: recommended_ram_mb ?? null,
+          context_window: context_window ?? null,
+          capabilities, source_url: source_url ?? null, description: description ?? null,
           metadata,
         }, { onConflict: "tenant_id,provider,name" }).select().single();
         if (error) return jsonResponse((console.error("[db_error]", error), { error: "Database operation failed" }), 500);
-        await audit("super_admin", "model.register", data.id, { name, provider, source_kind });
+        await audit("super_admin", "MODEL_INSTALLED", data.id, { name, provider, source_kind, event: "model.register" });
         return jsonResponse({ model: data });
       }
+
+      // detail — one model, full record
+      if (sub === "detail") {
+        const id = (body?.id as string) || url.searchParams.get("id");
+        if (!id) return jsonResponse({ error: "id required" }, 400);
+        const { data, error } = await supabase.from("model_registry").select("*").eq("id", id).maybeSingle();
+        if (error) return jsonResponse((console.error("[db_error]", error), { error: "Database operation failed" }), 500);
+        if (!data) return jsonResponse({ error: "Model not found" }, 404);
+        let storage: any = { stored: false };
+        if (data.storage_path) {
+          const dir = data.storage_path.split("/").slice(0, -1).join("/");
+          const base = data.storage_path.split("/").pop()!;
+          const { data: files } = await supabase.storage.from("tivo-models").list(dir, { search: base, limit: 1 });
+          const f = files?.[0];
+          storage = { stored: !!f, path: data.storage_path, size_bytes: (f as any)?.metadata?.size ?? null };
+        }
+        return jsonResponse({ model: data, storage });
+      }
+
+      // download — REAL server-side transfer into Cloud storage. No fake progress.
+      // Edge Function memory is the hard limit: oversized binaries are refused truthfully.
+      if (sub === "download" && req.method === "POST") {
+        const MAX_BYTES = 80 * 1024 * 1024; // Edge Function safe ceiling
+        const { id } = body || {};
+        if (!id) return jsonResponse({ error: "id required" }, 400);
+        const { data: m } = await supabase.from("model_registry").select("*").eq("id", id).maybeSingle();
+        if (!m) return jsonResponse({ error: "Model not found" }, 404);
+        if (m.source_kind !== "downloadable") {
+          return jsonResponse({ error: "Remote API models have nothing to download" }, 400);
+        }
+        const src = m.download_url;
+        if (!src || !/^https:\/\//i.test(src)) {
+          await supabase.from("model_registry").update({
+            status: "available",
+            metadata: { ...(m.metadata || {}), last_error: "No https download_url is registered for this model" },
+          }).eq("id", id);
+          await audit("super_admin", "MODEL_DOWNLOAD_FAILED", id, { reason: "no_download_url" });
+          return jsonResponse({
+            error: "No download URL is registered for this model. Register a direct https artifact URL first.",
+          }, 409);
+        }
+        if (m.size_bytes && m.size_bytes > MAX_BYTES) {
+          await supabase.from("model_registry").update({
+            status: "available",
+            metadata: {
+              ...(m.metadata || {}),
+              last_error: `Artifact is ${(m.size_bytes / 1e6).toFixed(0)} MB — above the ${(MAX_BYTES / 1e6).toFixed(0)} MB Cloud transfer ceiling. A native/local runtime must fetch it directly.`,
+            },
+          }).eq("id", id);
+          await audit("super_admin", "MODEL_DOWNLOAD_FAILED", id, { reason: "too_large", size_bytes: m.size_bytes });
+          return jsonResponse({
+            error: `Artifact too large for Cloud transfer (${(m.size_bytes / 1e6).toFixed(0)} MB > ${(MAX_BYTES / 1e6).toFixed(0)} MB). Use a local/native runtime to fetch this model — Cloud cannot store it.`,
+            blocker: "cloud_transfer_limit",
+          }, 413);
+        }
+
+        await supabase.from("model_registry").update({ status: "downloading" }).eq("id", id);
+        await audit("super_admin", "MODEL_DOWNLOAD_STARTED", id, { url: src });
+        const ctrl = new AbortController();
+        const timer = setTimeout(() => ctrl.abort(), 55000);
+        try {
+          const r = await fetch(src, { signal: ctrl.signal, redirect: "follow" });
+          if (!r.ok) throw new Error(`HTTP ${r.status}`);
+          const declared = Number(r.headers.get("content-length") || 0);
+          if (declared > MAX_BYTES) throw new Error(`Artifact is ${(declared / 1e6).toFixed(0)} MB — above the Cloud transfer ceiling`);
+          const buf = new Uint8Array(await r.arrayBuffer());
+          if (buf.byteLength > MAX_BYTES) throw new Error("Artifact exceeded the Cloud transfer ceiling");
+
+          await supabase.from("model_registry").update({ status: "verifying", size_bytes: buf.byteLength }).eq("id", id);
+          const digest = await crypto.subtle.digest("SHA-256", buf);
+          const sha = Array.from(new Uint8Array(digest)).map((b) => b.toString(16).padStart(2, "0")).join("");
+          if (m.checksum && m.checksum.replace(/^sha256:/i, "").toLowerCase() !== sha) {
+            throw new Error("Checksum mismatch — artifact rejected");
+          }
+
+          const path = `${m.tenant_id}/${m.id}/${m.name}.${m.format || "bin"}`;
+          const { error: ue } = await supabase.storage.from("tivo-models")
+            .upload(path, buf, { upsert: true, contentType: "application/octet-stream" });
+          if (ue) throw new Error(`Storage upload failed: ${ue.message}`);
+
+          const { data: done, error: fe } = await supabase.from("model_registry").update({
+            status: "installed", installed: true, storage_path: path,
+            checksum: m.checksum || `sha256:${sha}`, size_bytes: buf.byteLength,
+            metadata: { ...(m.metadata || {}), last_error: null, installed_at: new Date().toISOString() },
+          }).eq("id", id).select().single();
+          if (fe) throw new Error("Database update failed after upload");
+          await audit("super_admin", "MODEL_DOWNLOAD_COMPLETED", id, { path, size_bytes: buf.byteLength });
+          await notify("info", "✅ Model installed", `${m.display_name || m.name} is installed`, { model_id: id });
+          return jsonResponse({ model: done, sha256: sha });
+        } catch (e) {
+          const reason = e instanceof Error ? (e.name === "AbortError" ? "Download timed out (55s Cloud limit)" : e.message) : "Download failed";
+          await supabase.from("model_registry").update({
+            status: "failed", installed: false,
+            metadata: { ...(m.metadata || {}), last_error: String(reason).slice(0, 500) },
+          }).eq("id", id);
+          await audit("super_admin", "MODEL_DOWNLOAD_FAILED", id, { reason });
+          return jsonResponse({ error: reason, blocker: "download_failed" }, 502);
+        } finally {
+          clearTimeout(timer);
+        }
+      }
+
+      // sync-local — register models discovered on a local LLM server.
+      // Identity = provider + model identifier, so repeat syncs never duplicate rows.
+      if (sub === "sync-local" && req.method === "POST") {
+        const models = Array.isArray(body?.models) ? body.models : [];
+        const endpointHost = String(body?.endpoint_host || "local");
+        if (!models.length) return jsonResponse({ error: "models[] required" }, 400);
+        const rows = models.slice(0, 50).map((mm: any) => ({
+          tenant_id: "tenant_main",
+          name: String(mm.id || mm.name || "").slice(0, 200),
+          display_name: String(mm.display_name || mm.id || mm.name || "").slice(0, 200),
+          provider: "local_server",
+          model_identifier: String(mm.id || mm.name || "").slice(0, 200),
+          source_kind: "remote_api",
+          format: mm.format ?? null,
+          quantization: mm.quantization ?? null,
+          context_window: Number(mm.context_window) || null,
+          capabilities: Array.isArray(mm.capabilities) ? mm.capabilities : ["general"],
+          supported_runtimes: ["local_server"],
+          platforms: ["android", "ios", "web", "windows", "linux"],
+          status: "ready",
+          installed: true,
+          description: `Discovered on local LLM server (${endpointHost}).`,
+          metadata: { discovered_at: new Date().toISOString(), endpoint_host: endpointHost },
+        })).filter((r: any) => r.name);
+        if (!rows.length) return jsonResponse({ error: "No usable model entries" }, 400);
+        const { data, error } = await supabase.from("model_registry")
+          .upsert(rows, { onConflict: "tenant_id,provider,name" }).select();
+        if (error) return jsonResponse((console.error("[db_error]", error), { error: "Database operation failed" }), 500);
+        await audit("super_admin", "LOCAL_RUNTIME_CONNECTED", endpointHost, { synced: rows.length });
+        return jsonResponse({ models: data || [], synced: rows.length });
+      }
+
 
       // status — lifecycle transition
       if (sub === "status" && (req.method === "POST" || req.method === "PUT")) {
