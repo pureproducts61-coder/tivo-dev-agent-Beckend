@@ -1042,6 +1042,18 @@ serve(async (req) => {
         return jsonResponse({ ok: true, artifact_removed: artifactRemoved });
       }
 
+      // runtime-event — truthful audit trail for local runtime connect/disconnect
+      if (sub === "runtime-event" && req.method === "POST") {
+        const ev = String(body?.event || "");
+        const allowed = ["LOCAL_RUNTIME_CONNECTED", "LOCAL_RUNTIME_DISCONNECTED"];
+        if (!allowed.includes(ev)) return jsonResponse({ error: `event must be one of ${allowed.join(", ")}` }, 400);
+        await audit("super_admin", ev, String(body?.endpoint_host || "local").slice(0, 200), {
+          reason: String(body?.reason || "").slice(0, 300),
+          model_count: Number(body?.model_count) || 0,
+        });
+        return jsonResponse({ ok: true });
+      }
+
       return jsonResponse({ error: `Unknown models action: ${sub}` }, 404);
     }
 
