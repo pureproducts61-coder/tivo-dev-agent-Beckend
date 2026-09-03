@@ -90,6 +90,43 @@ export function onTivoEvent(fn: Listener) {
   return () => listeners.delete(fn);
 }
 
+const UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
+const asUuid = (v?: string | null) => (v && UUID_RE.test(v) ? v : null);
+
+/**
+ * Best-effort persistence into `public.execution_events`. RLS scopes rows to the
+ * signed-in user; when there is no session the insert simply fails and we fall
+ * back to the legacy audit trail. Never throws, never blocks the caller.
+ */
+async function persistEvent(event: TivoEvent): Promise<void> {
+  try {
+    const { data } = await supabase.auth.getUser();
+    const userId = data.user?.id;
+    if (!userId) throw new Error("no session");
+    const { error } = await supabase.from("execution_events").insert({
+      user_id: userId,
+      conversation_id: asUuid(event.conversationId),
+      project_id: asUuid(event.projectId),
+      task_id: asUuid(event.taskId),
+      type: event.type,
+      runtime: event.runtime ?? null,
+      capability: event.capability ?? null,
+      message: event.message ?? null,
+      // already sanitized in emitTivoEvent
+      meta: (event.meta ?? {}) as any,
+    });
+    if (error) throw new Error(error.message);
+  } catch {
+    // Single fallback only — never double-write the same event.
+    logAudit(`event.${event.type}`, event.taskId || event.projectId || undefined, {
+      runtime: event.runtime,
+      capability: event.capability,
+      message: event.message,
+      persisted: false,
+    });
+  }
+}
+
 /**
  * Emit a canonical event. Call this ONLY after the described operation really
  * happened (or really failed). Never call it to animate progress.
@@ -112,12 +149,7 @@ export function emitTivoEvent(
       /* a broken renderer must not break execution */
     }
   }
-  // Persist the trail in the existing audit_logs table (best effort).
-  logAudit(`event.${type}`, event.taskId || event.projectId || undefined, {
-    runtime: event.runtime,
-    capability: event.capability,
-    message: event.message,
-    ...(event.meta || {}),
-  });
+  void persistEvent(event);
   return event;
+
 }
