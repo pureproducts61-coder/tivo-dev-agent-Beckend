@@ -1,4 +1,5 @@
 import { useEffect, useRef, useState } from "react";
+import { useSearchParams } from "react-router-dom";
 import { useSuperAdmin } from "@/contexts/SuperAdminContext";
 import { ChatMessage, ChatMsg, Artifact, validateArtifact } from "@/components/chat/ChatMessage";
 import { ChatInput } from "@/components/chat/ChatInput";
@@ -173,8 +174,42 @@ function uid() {
   return Math.random().toString(36).slice(2, 11);
 }
 
+const CURRENT_PROJECT_KEY = "tivo_current_project";
+
+/**
+ * Deterministic, zero-cost next-step chips. No AI call is made for suggestions —
+ * the primary chat request is the only AI call for a normal text turn.
+ */
+function heuristicChips(assistantText: string): string[] {
+  const t = assistantText.toLowerCase();
+  const bangla = /[\u0980-\u09FF]/.test(assistantText);
+  const out: string[] = [];
+  const add = (bn: string, en: string) => out.push(bangla ? bn : en);
+
+  if (/```/.test(assistantText)) add("এই কোডটা প্রজেক্টে যুক্ত করো", "Apply this code to the project");
+  if (/(build|apk|exe|deploy|publish|ডিপ্লয়)/.test(t)) add("Build/Deploy চালাও", "Run the build/deploy");
+  if (/(error|failed|bug|ত্রুটি)/.test(t)) add("রুট কজ ব্যাখ্যা করো", "Explain the root cause");
+  if (/(security|rls|token|auth)/.test(t)) add("Security scan চালাও", "Run a security scan");
+  add("সংক্ষেপে পরবর্তী ধাপ দাও", "List the next concrete steps");
+  add("এটা যাচাই করে দেখাও", "Verify this and show proof");
+  return Array.from(new Set(out)).slice(0, 6);
+}
+
+interface EventRow {
+  id: string;
+  type: string;
+  message: string | null;
+  runtime: string | null;
+  created_at: string;
+}
+
 export default function ChatScreen() {
   const { session } = useSuperAdmin();
+  const [searchParams, setSearchParams] = useSearchParams();
+  const convParam = searchParams.get("conv");
+  const projectParam = searchParams.get("project");
+
+  const [conversationId, setConversationId] = useState<string | null>(convParam);
   const [messages, setMessages] = useState<ChatMsg[]>([]);
   const [input, setInput] = useState("");
   const [files, setFiles] = useState<File[]>([]);
@@ -183,10 +218,11 @@ export default function ChatScreen() {
   const [scanOpen, setScanOpen] = useState(false);
   const [varsOpen, setVarsOpen] = useState(false);
   const [chips, setChips] = useState<string[]>([]);
-  const [chipsLoading, setChipsLoading] = useState(false);
+  const [events, setEvents] = useState<EventRow[]>([]);
   const scrollRef = useRef<HTMLDivElement>(null);
   const abortRef = useRef<AbortController | null>(null);
-  const chipsAbortRef = useRef<AbortController | null>(null);
+  /** Local message ids already written to `public.messages` — blocks double inserts. */
+  const persistedRef = useRef<Set<string>>(new Set());
 
   useEffect(() => {
     scrollRef.current?.scrollTo({ top: scrollRef.current.scrollHeight, behavior: "smooth" });
@@ -209,6 +245,146 @@ export default function ChatScreen() {
     return () => window.removeEventListener("tivo:input-draft", h);
   }, []);
 
+  // ── Restore the exact conversation named by ?conv=<uuid> ───────────────────
+  useEffect(() => {
+    let cancelled = false;
+    setConversationId(convParam);
+    persistedRef.current = new Set();
+    setChips([]);
+    if (!convParam) {
+      setMessages([]);
+      setEvents([]);
+      return;
+    }
+    (async () => {
+      const { data: conv } = await supabase
+        .from("conversations")
+        .select("id")
+        .eq("id", convParam)
+        .maybeSingle();
+      if (cancelled) return;
+      if (!conv) {
+        setMessages([
+          { id: uid(), role: "system", content: "⚠️ এই conversation পাওয়া যায়নি (অথবা access নেই)।", ts: Date.now() },
+        ]);
+        return;
+      }
+      const { data: rows } = await supabase
+        .from("messages")
+        .select("id, role, content, created_at")
+        .eq("conversation_id", convParam)
+        .order("created_at", { ascending: true })
+        .limit(500);
+      if (cancelled) return;
+      const restored: ChatMsg[] = (rows ?? []).map((r: any) => {
+        const { clean, artifacts, invalidJson } = extractArtifacts(r.content || "");
+        return {
+          id: r.id,
+          role: r.role === "assistant" ? "assistant" : r.role === "system" ? "system" : "user",
+          content: clean,
+          artifacts: artifacts.length ? artifacts : undefined,
+          invalidArtifactJson: invalidJson,
+          ts: new Date(r.created_at).getTime(),
+        };
+      });
+      for (const m of restored) persistedRef.current.add(m.id);
+      setMessages(restored);
+      const last = restored[restored.length - 1];
+      if (last?.role === "assistant" && last.content) setChips(heuristicChips(last.content));
+
+      const { data: evRows } = await supabase
+        .from("execution_events")
+        .select("id, type, message, runtime, created_at")
+        .eq("conversation_id", convParam)
+        .order("created_at", { ascending: true })
+        .limit(50);
+      if (!cancelled) setEvents((evRows as EventRow[]) ?? []);
+    })();
+    return () => {
+      cancelled = true;
+    };
+  }, [convParam]);
+
+  // ── Live execution events, scoped to the open conversation ────────────────
+  useEffect(() => {
+    if (!conversationId) return;
+    const channel = supabase
+      .channel(`exec-events-${conversationId}`)
+      .on(
+        "postgres_changes",
+        {
+          event: "INSERT",
+          schema: "public",
+          table: "execution_events",
+          filter: `conversation_id=eq.${conversationId}`,
+        },
+        (payload) => {
+          const r = payload.new as any;
+          setEvents((prev) =>
+            prev.some((e) => e.id === r.id)
+              ? prev
+              : [...prev.slice(-49), { id: r.id, type: r.type, message: r.message, runtime: r.runtime, created_at: r.created_at }],
+          );
+        },
+      )
+      .subscribe();
+    return () => {
+      supabase.removeChannel(channel);
+    };
+  }, [conversationId]);
+
+  /** Creates the conversation row on the first turn. Returns null if it fails. */
+  async function ensureConversation(firstText: string): Promise<string | null> {
+    if (conversationId) return conversationId;
+    try {
+      const { data: u } = await supabase.auth.getUser();
+      const userId = u.user?.id;
+      if (!userId) throw new Error("no authenticated session");
+      const title = (firstText.trim().split("\n")[0] || "New chat").slice(0, 80);
+      const { data, error } = await supabase
+        .from("conversations")
+        .insert({ user_id: userId, title })
+        .select("id")
+        .single();
+      if (error) throw new Error(error.message);
+      const id = data.id as string;
+      setConversationId(id);
+      // Keep the URL shareable/refreshable without remounting a new chat.
+      setSearchParams(
+        (prev) => {
+          const next = new URLSearchParams(prev);
+          next.set("conv", id);
+          return next;
+        },
+        { replace: true },
+      );
+      return id;
+    } catch (e: any) {
+      // Never lose the chat: the in-memory UI stays intact, we only log.
+      logAudit("chat.persist_failed", undefined, { stage: "conversation", reason: String(e?.message || e) });
+      return null;
+    }
+  }
+
+  /** Persists one message exactly once (guarded by localId). */
+  async function persistMessage(convId: string | null, localId: string, role: "user" | "assistant", content: string) {
+    if (!convId || !content.trim()) return;
+    if (persistedRef.current.has(localId)) return;
+    persistedRef.current.add(localId);
+    try {
+      const { data: u } = await supabase.auth.getUser();
+      const userId = u.user?.id;
+      if (!userId) throw new Error("no authenticated session");
+      const { error } = await supabase
+        .from("messages")
+        .insert({ conversation_id: convId, user_id: userId, role, content });
+      if (error) throw new Error(error.message);
+      await supabase.from("conversations").update({ updated_at: new Date().toISOString() }).eq("id", convId);
+    } catch (e: any) {
+      persistedRef.current.delete(localId);
+      logAudit("chat.persist_failed", convId, { stage: role, reason: String(e?.message || e) });
+    }
+  }
 
   async function readFileAsBase64(f: File): Promise<string> {
     return new Promise((res, rej) => {
@@ -239,6 +415,9 @@ export default function ChatScreen() {
     setChips([]); // clear stale chips on new turn
     setStreaming(true);
     setStatusText("চিন্তা করছি...");
+
+    const convId = await ensureConversation(text);
+    void persistMessage(convId, userMsg.id, "user", text);
 
     let fileContext = "";
     for (const f of filesToSend) {
@@ -324,8 +503,16 @@ export default function ChatScreen() {
           } catch {}
         }
       }
+      // Persist the finished assistant turn exactly once.
+      if (assistantText.trim()) {
+        await persistMessage(convId, assistantId, "assistant", assistantText);
+        setChips(heuristicChips(assistantText));
+      }
     } catch (e: any) {
-      if (e.name !== "AbortError") {
+      if (e.name === "AbortError") {
+        // Aborted mid-stream: keep whatever really arrived, persist it once.
+        if (assistantText.trim()) void persistMessage(convId, assistantId, "assistant", assistantText);
+      } else {
         setMessages((m) => {
           const out = [...m];
           const idx = out.findIndex((x) => x.id === assistantId);
@@ -356,14 +543,25 @@ export default function ChatScreen() {
   // the Projects page ⋮ menu builds from the exact same factory.
   const actions = buildProjectActions({
     masterSecret: session?.masterSecret || "",
+    // NEVER guess: the chat acts on the explicitly selected project only
+    // (?project=<id> in the URL, or the one picked on the Projects screen).
     resolveProject: async () => {
+      let id = projectParam;
+      if (!id) {
+        try {
+          id = sessionStorage.getItem(CURRENT_PROJECT_KEY);
+        } catch {
+          id = null;
+        }
+      }
+      if (!id) return null;
       const { data, error } = await supabase
         .from("projects")
         .select("id, name")
-        .order("updated_at", { ascending: false })
-        .limit(1);
+        .eq("id", id)
+        .maybeSingle();
       if (error) throw new Error(error.message);
-      return data?.[0] ?? null;
+      return data ?? null;
     },
     report: (msg, artifacts) => pushSystem(msg, artifacts),
     openSecurityScan: () => setScanOpen(true),
@@ -386,81 +584,13 @@ export default function ChatScreen() {
       const prev = m[m.length - 2];
       const start = prev?.ts ?? last.ts;
       const durationMs = Date.now() - start;
-      // rough token→credit estimate: 1 credit ≈ 4k chars
+      // rough estimate only — NOT provider billing truth (1 credit ≈ 4k chars)
       const creditsUsed = Math.max(0.001, last.content.length / 4000);
       const out = [...m];
       out[out.length - 1] = { ...last, durationMs, creditsUsed };
       return out;
     });
   }, [streaming]);
-
-  // Generate smart next-step chips after each assistant reply.
-  // Chips describe *next actions*, not restatements of the answer.
-  useEffect(() => {
-    if (streaming || !session) return;
-    const last = messages[messages.length - 1];
-    if (!last || last.role !== "assistant" || !last.content) return;
-
-    const prev = messages[messages.length - 2];
-    const userText = prev?.role === "user" ? prev.content : "";
-    const assistantText = last.content;
-
-    const ctrl = new AbortController();
-    chipsAbortRef.current?.abort();
-    chipsAbortRef.current = ctrl;
-    setChipsLoading(true);
-
-    const sys = `You generate short "next action" suggestion chips for the TIVO Dev Agent UI.
-Rules:
-- Output ONLY a JSON array of 4-6 strings, no prose, no markdown fences.
-- Each chip is a concrete NEXT step the admin might want after reading the assistant reply.
-- Chips MUST NOT restate, summarize, or repeat the assistant's answer.
-- Each chip is a single short line (max ~48 chars), imperative voice, admin's language (Bangla if the conversation is Bangla, else English).
-- Vary categories: verify, deploy, test, extend, secure, document, rollback, ask follow-up.
-- Do not include emoji-only chips or generic filler like "Thanks".`;
-
-    const usr = `Recent user message:\n${(userText || "").slice(-800)}\n\nAssistant reply:\n${assistantText.slice(-1600)}\n\nReturn the JSON array of next-step chips now.`;
-
-    (async () => {
-      try {
-        const res = await fetch(`${BACKEND}/functions/v1/ai-engine/chat`, {
-          method: "POST",
-          headers: { "Content-Type": "application/json", "x-master-secret": session.masterSecret },
-          body: JSON.stringify({
-            messages: [
-              { role: "system", content: sys },
-              { role: "user", content: usr },
-            ],
-            stream: false,
-          }),
-          signal: ctrl.signal,
-        });
-        if (!res.ok) throw new Error("chips " + res.status);
-        const data = await res.json();
-        const raw =
-          data?.choices?.[0]?.message?.content ??
-          data?.content ??
-          data?.message ??
-          "";
-        const jsonMatch = String(raw).match(/\[[\s\S]*\]/);
-        const parsed = jsonMatch ? JSON.parse(jsonMatch[0]) : [];
-        if (Array.isArray(parsed)) {
-          const clean = parsed
-            .filter((s: any) => typeof s === "string")
-            .map((s: string) => s.trim())
-            .filter(Boolean)
-            .slice(0, 8);
-          setChips(clean);
-        }
-      } catch {
-        /* silent — chips are optional */
-      } finally {
-        setChipsLoading(false);
-      }
-    })();
-
-    return () => ctrl.abort();
-  }, [streaming, messages, session]);
 
   function handleChipPick(text: string) {
     setInput((prev) => (prev ? prev + "\n\n" + text : text));
@@ -487,6 +617,23 @@ Rules:
           />
         ))}
 
+        {/* Minimal, truthful execution trail — only events that really happened. */}
+        {events.length > 0 && (
+          <div className="rounded-xl border border-zinc-800 bg-zinc-900/40 px-3 py-2 space-y-1">
+            <div className="text-[10px] uppercase tracking-wide text-zinc-500">Execution</div>
+            {events.slice(-8).map((e) => (
+              <div key={e.id} className="flex items-center gap-2 text-[11px] text-zinc-400">
+                <span className="w-1.5 h-1.5 rounded-full bg-amber-500 shrink-0" />
+                <span className="font-mono text-zinc-500 shrink-0">{e.type}</span>
+                <span className="truncate">{e.message || ""}</span>
+                <span className="ml-auto text-zinc-600 shrink-0">
+                  {new Date(e.created_at).toLocaleTimeString()}
+                </span>
+              </div>
+            ))}
+          </div>
+        )}
+
         {statusText && (
           <div className="flex justify-start">
             <div className="inline-flex items-center gap-2 px-3 py-1.5 rounded-full bg-amber-950/30 border border-amber-800/30 text-amber-200 text-xs animate-fade-in">
@@ -501,12 +648,7 @@ Rules:
       </div>
 
       <div className="max-w-3xl w-full mx-auto shrink-0">
-        <SuggestionChips
-          chips={chips}
-          loading={chipsLoading}
-          onPick={handleChipPick}
-          onDismiss={() => setChips([])}
-        />
+        <SuggestionChips chips={chips} onPick={handleChipPick} onDismiss={() => setChips([])} />
         <ChatInput
           value={input}
           onChange={setInput}
@@ -524,4 +666,5 @@ Rules:
     </div>
   );
 }
+
 

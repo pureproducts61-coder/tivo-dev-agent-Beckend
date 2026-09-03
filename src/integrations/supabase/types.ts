@@ -278,6 +278,63 @@ export type Database = {
         }
         Relationships: []
       }
+      execution_events: {
+        Row: {
+          capability: string | null
+          conversation_id: string | null
+          created_at: string
+          id: string
+          message: string | null
+          meta: Json
+          project_id: string | null
+          runtime: string | null
+          task_id: string | null
+          type: string
+          user_id: string
+        }
+        Insert: {
+          capability?: string | null
+          conversation_id?: string | null
+          created_at?: string
+          id?: string
+          message?: string | null
+          meta?: Json
+          project_id?: string | null
+          runtime?: string | null
+          task_id?: string | null
+          type: string
+          user_id?: string
+        }
+        Update: {
+          capability?: string | null
+          conversation_id?: string | null
+          created_at?: string
+          id?: string
+          message?: string | null
+          meta?: Json
+          project_id?: string | null
+          runtime?: string | null
+          task_id?: string | null
+          type?: string
+          user_id?: string
+        }
+        Relationships: [
+          {
+            foreignKeyName: "execution_events_conversation_id_fkey"
+            columns: ["conversation_id"]
+            isOneToOne: false
+            referencedRelation: "conversations"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "execution_events_project_id_fkey"
+            columns: ["project_id"]
+            isOneToOne: false
+            referencedRelation: "projects"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
       job_queue: {
         Row: {
           attempts: number
