@@ -11,6 +11,7 @@
  */
 
 import { logAudit } from "@/lib/audit";
+import { supabase } from "@/integrations/supabase/client";
 
 export type TivoEventType =
   | "task.created"
