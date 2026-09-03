@@ -44,6 +44,8 @@ export interface TivoEvent {
   /** Task/job correlation id (job_queue id where a real job exists). */
   taskId?: string;
   projectId?: string | null;
+  /** Chat conversation this event belongs to (public.conversations.id). */
+  conversationId?: string | null;
   runtime?: string;
   capability?: string;
   message?: string;
@@ -51,6 +53,7 @@ export interface TivoEvent {
   meta?: Record<string, unknown>;
   ts: number;
 }
+
 
 const SECRET_KEY = /(secret|token|key|password|passwd|credential|authorization|cookie|jwt|bearer)/i;
 
