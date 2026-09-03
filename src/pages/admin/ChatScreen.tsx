@@ -1,4 +1,5 @@
 import { useEffect, useRef, useState } from "react";
+import { useSearchParams } from "react-router-dom";
 import { useSuperAdmin } from "@/contexts/SuperAdminContext";
 import { ChatMessage, ChatMsg, Artifact, validateArtifact } from "@/components/chat/ChatMessage";
 import { ChatInput } from "@/components/chat/ChatInput";
