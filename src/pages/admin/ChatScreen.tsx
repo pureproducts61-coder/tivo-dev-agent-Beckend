@@ -243,6 +243,19 @@ export default function ChatScreen() {
   const [varsOpen, setVarsOpen] = useState(false);
   const [chips, setChips] = useState<string[]>([]);
   const [events, setEvents] = useState<EventRow[]>([]);
+  /** Truthful "who actually answered" line — set only after real discovery. */
+  const [runtimeStatus, setRuntimeStatus] = useState<string | null>(null);
+
+  /** ONE registry for the whole screen — the single TIVO Brain's router. */
+  const registry = useMemo(
+    () =>
+      createRuntimeRegistry({
+        backend: BACKEND,
+        masterSecret: session?.masterSecret || "",
+      }),
+    [session?.masterSecret],
+  );
+
   const scrollRef = useRef<HTMLDivElement>(null);
   const abortRef = useRef<AbortController | null>(null);
   /** Local message ids already written to `public.messages` — blocks double inserts. */
