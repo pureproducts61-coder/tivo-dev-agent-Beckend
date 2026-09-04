@@ -1,4 +1,4 @@
-import { useEffect, useRef, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import { useSearchParams } from "react-router-dom";
 import { useSuperAdmin } from "@/contexts/SuperAdminContext";
 import { ChatMessage, ChatMsg, Artifact, validateArtifact } from "@/components/chat/ChatMessage";
@@ -9,6 +9,10 @@ import { VariablesPanel } from "@/components/admin/VariablesPanel";
 import { SuggestionChips } from "@/components/chat/SuggestionChips";
 import { supabase } from "@/integrations/supabase/client";
 import { logAudit } from "@/lib/audit";
+import { createRuntimeRegistry } from "@/lib/tivo/runtimes";
+import { route } from "@/lib/tivo/router";
+import { emitTivoEvent } from "@/lib/tivo/events";
+
 
 
 const BACKEND = import.meta.env.VITE_SUPABASE_URL;
@@ -119,8 +123,27 @@ async function loadConstitution(): Promise<string> {
   return TIVO_CONSTITUTION_FALLBACK;
 }
 
-async function buildSystemPrompt(): Promise<string> {
-  const constitution = await loadConstitution();
+/**
+ * Freshness block — the clock is read at request time, never hardcoded, so the
+ * Brain always knows "now" and knows when it must verify instead of recall.
+ */
+function freshnessBlock(researchAvailable: boolean): string {
+  const now = new Date();
+  return [
+    "\n\n━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━",
+    "⏱  CURRENT TIME & FRESHNESS POLICY",
+    "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━",
+    `Current timestamp (authoritative): ${now.toISOString()} (local: ${now.toString()}).`,
+    "Your training memory is stale. For anything time-sensitive — current library/package versions, current documentation, current APIs, current prices, current news — do NOT answer from memory.",
+    researchAvailable
+      ? "A research/web capability is available: use it to verify, and cite the sources you actually fetched."
+      : "No research/web capability is reachable right now: say plainly that fresh verification is unavailable and mark the answer as unverified.",
+    "Never fabricate a web result, a URL, or a version number you did not verify.",
+  ].join("\n");
+}
+
+async function buildSystemPrompt(researchAvailable: boolean): Promise<string> {
+  const constitution = (await loadConstitution()) + freshnessBlock(researchAvailable);
   try {
     const { data } = await supabase
       .from("ai_variables")
@@ -145,6 +168,7 @@ async function buildSystemPrompt(): Promise<string> {
     return constitution;
   }
 }
+
 
 
 function extractArtifacts(content: string): { clean: string; artifacts: Artifact[]; invalidJson?: string } {
@@ -219,6 +243,19 @@ export default function ChatScreen() {
   const [varsOpen, setVarsOpen] = useState(false);
   const [chips, setChips] = useState<string[]>([]);
   const [events, setEvents] = useState<EventRow[]>([]);
+  /** Truthful "who actually answered" line — set only after real discovery. */
+  const [runtimeStatus, setRuntimeStatus] = useState<string | null>(null);
+
+  /** ONE registry for the whole screen — the single TIVO Brain's router. */
+  const registry = useMemo(
+    () =>
+      createRuntimeRegistry({
+        backend: BACKEND,
+        masterSecret: session?.masterSecret || "",
+      }),
+    [session?.masterSecret],
+  );
+
   const scrollRef = useRef<HTMLDivElement>(null);
   const abortRef = useRef<AbortController | null>(null);
   /** Local message ids already written to `public.messages` — blocks double inserts. */
@@ -459,9 +496,44 @@ export default function ChatScreen() {
     const assistantId = uid();
     setMessages((m) => [...m, { id: assistantId, role: "assistant", content: "", ts: Date.now() }]);
 
-    const systemPrompt = await buildSystemPrompt();
+    // ── ONE Brain → capability router → a runtime that is really reachable ──
+    const decision = await route(registry, text);
+    const research = await registry.select("research");
+    const systemPrompt = await buildSystemPrompt(!!research.runtime);
 
-    try {
+    const local =
+      decision.runtime && decision.runtime.id !== "cloud" && typeof decision.runtime.generate === "function"
+        ? decision.runtime
+        : null;
+    let localModel: string | null = null;
+    if (local) {
+      const picked = await local.pickModel?.(decision.capability);
+      localModel = picked?.identifier ?? null;
+      if (!localModel) {
+        // Reachable server with no usable model — never pretend it can answer.
+        emitTivoEvent("runtime.unavailable", {
+          conversationId: convId,
+          runtime: local.id,
+          capability: decision.capability,
+          message: "no local model available for this task",
+        });
+      }
+    }
+
+    const applyDelta = (delta: string) => {
+      assistantText += delta;
+      const { clean, artifacts, invalidJson } = extractArtifacts(assistantText);
+      setMessages((m) => {
+        const out = [...m];
+        const idx = out.findIndex((x) => x.id === assistantId);
+        if (idx >= 0) out[idx] = { ...out[idx], content: clean, artifacts, invalidArtifactJson: invalidJson };
+        return out;
+      });
+    };
+
+    /** Cloud AI (Lovable Gateway via the existing ai-engine function). */
+    const runCloud = async () => {
+      setRuntimeStatus("Cloud • ai-engine");
       const res = await fetch(`${BACKEND}/functions/v1/ai-engine/chat`, {
         method: "POST",
         headers: { "Content-Type": "application/json", "x-master-secret": session.masterSecret },
@@ -490,19 +562,39 @@ export default function ChatScreen() {
           try {
             const p = JSON.parse(j);
             const delta = p.choices?.[0]?.delta?.content;
-            if (delta) {
-              assistantText += delta;
-              const { clean, artifacts, invalidJson } = extractArtifacts(assistantText);
-              setMessages((m) => {
-                const out = [...m];
-                const idx = out.findIndex((x) => x.id === assistantId);
-                if (idx >= 0) out[idx] = { ...out[idx], content: clean, artifacts, invalidArtifactJson: invalidJson };
-                return out;
-              });
-            }
+            if (delta) applyDelta(delta);
           } catch {}
         }
       }
+    };
+
+    try {
+      if (local && localModel) {
+        setRuntimeStatus(`Local • ${localModel}`);
+        try {
+          await local.generate!({
+            messages: [{ role: "system", content: systemPrompt }, ...chatHistory],
+            model: localModel,
+            signal: ctrl.signal,
+            onToken: applyDelta,
+          });
+        } catch (localErr: any) {
+          if (localErr?.name === "AbortError") throw localErr;
+          // Truthful fallback: say the local run failed, then really use Cloud.
+          emitTivoEvent("runtime.fallback", {
+            conversationId: convId,
+            runtime: local.id,
+            capability: decision.capability,
+            message: `local runtime failed (${String(localErr?.message || localErr)}) — falling back to Cloud AI`,
+          });
+          assistantText = "";
+          setRuntimeStatus(`Cloud • fallback (local ${localModel} failed)`);
+          await runCloud();
+        }
+      } else {
+        await runCloud();
+      }
+
       // Persist the finished assistant turn exactly once.
       if (assistantText.trim()) {
         await persistMessage(convId, assistantId, "assistant", assistantText);
@@ -526,6 +618,7 @@ export default function ChatScreen() {
       abortRef.current = null;
     }
   }
+
 
   function pushSystem(content: string, artifacts?: Artifact[]) {
     setMessages((m) => [...m, { id: uid(), role: "system", content, artifacts, ts: Date.now() }]);
@@ -645,10 +738,20 @@ export default function ChatScreen() {
             </div>
           </div>
         )}
+
+        {runtimeStatus && (
+          <div className="flex justify-start">
+            <span className="inline-flex items-center gap-1.5 text-[11px] text-zinc-500">
+              <span className="w-1.5 h-1.5 rounded-full bg-emerald-500" />
+              {runtimeStatus}
+            </span>
+          </div>
+        )}
       </div>
 
       <div className="max-w-3xl w-full mx-auto shrink-0">
         <SuggestionChips chips={chips} onPick={handleChipPick} onDismiss={() => setChips([])} />
+
         <ChatInput
           value={input}
           onChange={setInput}

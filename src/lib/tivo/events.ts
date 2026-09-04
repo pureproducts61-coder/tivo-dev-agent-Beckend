@@ -36,6 +36,11 @@ export type TivoEventType =
   | "deployment.completed"
   | "runtime.selected"
   | "runtime.unavailable"
+  | "runtime.fallback"
+  | "model.discovered"
+  | "model.selected"
+  | "model.loaded"
+
   | "task.failed"
   | "task.completed";
 
