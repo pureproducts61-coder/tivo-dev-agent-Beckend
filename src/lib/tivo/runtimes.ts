@@ -180,6 +180,45 @@ export class LocalServerAdapter implements RuntimeAdapter {
     return [];
   }
 
+  /**
+   * Chooses a model the server really lists. Coding tasks prefer a coder model,
+   * reasoning prefers a reasoning-tuned one — but only when such a model is
+   * actually installed. Already-resident models (Ollama /api/ps) win ties.
+   */
+  async pickModel(capability: Capability): Promise<RuntimeModelInfo | null> {
+    const models = await this.listModels();
+    if (!models.length) return null;
+    emitTivoEvent("model.discovered", {
+      runtime: this.id,
+      capability,
+      message: `${models.length} local model(s) discovered`,
+      meta: { models: models.map((m) => m.identifier) },
+    });
+
+    const prefer =
+      capability === "coding"
+        ? /(coder|code|deepseek|qwen.*coder|starcoder|codellama)/i
+        : capability === "reasoning"
+          ? /(reason|r1|think|qwq|o1)/i
+          : /(instruct|chat|it$)/i;
+
+    const resident = new Set<string>();
+    const ps = await probe(await this.discover().then((e) => e || ""), "/api/ps");
+    if (ps?.models) for (const m of ps.models as any[]) resident.add(m.name);
+
+    const score = (m: RuntimeModelInfo) =>
+      (prefer.test(m.identifier) ? 2 : 0) + (resident.has(m.identifier) ? 1 : 0);
+    const chosen = [...models].sort((a, b) => score(b) - score(a))[0];
+
+    emitTivoEvent("model.selected", {
+      runtime: this.id,
+      capability,
+      message: chosen.identifier,
+      meta: { resident: resident.has(chosen.identifier) },
+    });
+    return chosen;
+  }
+
   async generate(req: {
     messages: Array<{ role: string; content: string }>;
     model?: string;
@@ -191,30 +230,46 @@ export class LocalServerAdapter implements RuntimeAdapter {
     const model = req.model || (await this.listModels())[0]?.identifier;
     if (!model) throw new Error("local runtime has no models installed");
 
-    if (this.protocol === "ollama") {
-      const r = await fetch(ep + "/api/chat", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ model, messages: req.messages, stream: false }),
-        signal: req.signal,
-      });
-      if (!r.ok) throw new Error(`local runtime error ${r.status}`);
-      const j = await r.json();
-      const text = j?.message?.content || "";
-      req.onToken?.(text);
-      return text;
-    }
-
-    const r = await fetch(ep + "/v1/chat/completions", {
+    const ollama = this.protocol === "ollama";
+    const r = await fetch(ep + (ollama ? "/api/chat" : "/v1/chat/completions"), {
       method: "POST",
       headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ model, messages: req.messages, stream: false }),
+      body: JSON.stringify({ model, messages: req.messages, stream: true }),
       signal: req.signal,
     });
     if (!r.ok) throw new Error(`local runtime error ${r.status}`);
-    const j = await r.json();
-    const text = j?.choices?.[0]?.message?.content || "";
-    req.onToken?.(text);
+    const reader = r.body?.getReader();
+    if (!reader) throw new Error("local runtime returned no stream");
+
+    const dec = new TextDecoder();
+    let buf = "";
+    let text = "";
+    while (true) {
+      const { done, value } = await reader.read();
+      if (done) break;
+      buf += dec.decode(value, { stream: true });
+      let nl: number;
+      while ((nl = buf.indexOf("\n")) !== -1) {
+        const line = buf.slice(0, nl).replace(/\r$/, "").trim();
+        buf = buf.slice(nl + 1);
+        if (!line) continue;
+        // Ollama streams NDJSON; OpenAI-compatible servers stream SSE.
+        const payload = ollama ? line : line.startsWith("data: ") ? line.slice(6).trim() : "";
+        if (!payload || payload === "[DONE]") continue;
+        try {
+          const j = JSON.parse(payload);
+          const delta: string =
+            j?.message?.content ?? j?.choices?.[0]?.delta?.content ?? j?.response ?? "";
+          if (delta) {
+            text += delta;
+            req.onToken?.(delta);
+          }
+        } catch {
+          /* partial JSON frame — wait for more bytes */
+        }
+      }
+    }
+    if (!text.trim()) throw new Error("local runtime produced no output");
     return text;
   }
 
@@ -227,6 +282,7 @@ export class LocalServerAdapter implements RuntimeAdapter {
     return (ps.models as any[]).some((m) => m.name === id);
   }
 }
+
 
 /**
  * Cloud runtime = the existing `ai-engine` Edge Function (Lovable AI Gateway).
