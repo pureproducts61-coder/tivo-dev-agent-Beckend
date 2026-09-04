@@ -1,4 +1,4 @@
-import { useEffect, useRef, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import { useSearchParams } from "react-router-dom";
 import { useSuperAdmin } from "@/contexts/SuperAdminContext";
 import { ChatMessage, ChatMsg, Artifact, validateArtifact } from "@/components/chat/ChatMessage";
@@ -9,6 +9,10 @@ import { VariablesPanel } from "@/components/admin/VariablesPanel";
 import { SuggestionChips } from "@/components/chat/SuggestionChips";
 import { supabase } from "@/integrations/supabase/client";
 import { logAudit } from "@/lib/audit";
+import { createRuntimeRegistry } from "@/lib/tivo/runtimes";
+import { route } from "@/lib/tivo/router";
+import { emitTivoEvent } from "@/lib/tivo/events";
+
 
 
 const BACKEND = import.meta.env.VITE_SUPABASE_URL;
