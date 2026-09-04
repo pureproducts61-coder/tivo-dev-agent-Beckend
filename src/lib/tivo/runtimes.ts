@@ -40,6 +40,11 @@ export interface RuntimeAdapter {
   discover?(): Promise<string | null>;
   health(): Promise<RuntimeHealth>;
   listModels?(): Promise<RuntimeModelInfo[]>;
+  /**
+   * Pick a really-available model for a capability. Returns null when the
+   * runtime has no model that can serve it — never invents a name.
+   */
+  pickModel?(capability: Capability): Promise<RuntimeModelInfo | null>;
   /** Present only when the runtime can actually run inference. */
   generate?(req: {
     messages: Array<{ role: string; content: string }>;
@@ -52,6 +57,7 @@ export interface RuntimeAdapter {
   unloadModel?(id: string): Promise<boolean>;
   isModelLoaded?(id: string): Promise<boolean>;
 }
+
 
 const LOCAL_ENDPOINT_KEY = "tivo_local_runtime_endpoint";
 
