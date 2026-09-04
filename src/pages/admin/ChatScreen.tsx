@@ -738,10 +738,20 @@ export default function ChatScreen() {
             </div>
           </div>
         )}
+
+        {runtimeStatus && (
+          <div className="flex justify-start">
+            <span className="inline-flex items-center gap-1.5 text-[11px] text-zinc-500">
+              <span className="w-1.5 h-1.5 rounded-full bg-emerald-500" />
+              {runtimeStatus}
+            </span>
+          </div>
+        )}
       </div>
 
       <div className="max-w-3xl w-full mx-auto shrink-0">
         <SuggestionChips chips={chips} onPick={handleChipPick} onDismiss={() => setChips([])} />
+
         <ChatInput
           value={input}
           onChange={setInput}
