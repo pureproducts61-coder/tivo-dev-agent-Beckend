@@ -203,8 +203,10 @@ export class LocalServerAdapter implements RuntimeAdapter {
           : /(instruct|chat|it$)/i;
 
     const resident = new Set<string>();
-    const ps = await probe(await this.discover().then((e) => e || ""), "/api/ps");
+    const ep = await this.discover();
+    const ps = ep ? await probe(ep, "/api/ps") : null;
     if (ps?.models) for (const m of ps.models as any[]) resident.add(m.name);
+
 
     const score = (m: RuntimeModelInfo) =>
       (prefer.test(m.identifier) ? 2 : 0) + (resident.has(m.identifier) ? 1 : 0);
