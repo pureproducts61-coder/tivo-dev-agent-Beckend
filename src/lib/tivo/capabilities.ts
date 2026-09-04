@@ -62,18 +62,64 @@ export function classifyTask(text: string): TaskKind {
   const t = (text || "").toLowerCase();
   const has = (...w: string[]) => w.some((x) => t.includes(x));
 
-  if (has("apk", "exe", "build", "compile", "বিল্ড")) return "build";
-  if (has("test", "vitest", "unit test", "টেস্ট")) return "test";
-  if (has("security", "vulnerab", "rls", "নিরাপত্তা")) return "security";
-  if (has("deploy", "publish", "vercel", "ডিপ্লয়", "পাবলিশ")) return "deploy";
-  if (has("model", "ollama", "quantiz", "মডেল")) return "model_management";
-  if (has("research", "docs", "documentation", "latest version", "github.com", "http://", "https://"))
+  if (has("apk", "exe", "build", "compile", "bundle", "gradle", "বিল্ড")) return "build";
+  if (has("test", "vitest", "jest", "unit test", "e2e", "playwright", "টেস্ট")) return "test";
+  if (has("security", "vulnerab", "rls", "cve", "xss", "sql injection", "নিরাপত্তা")) return "security";
+  if (has("deploy", "publish", "vercel", "netlify", "release", "ডিপ্লয়", "পাবলিশ")) return "deploy";
+  if (has("model", "ollama", "lm studio", "gguf", "quantiz", "মডেল")) return "model_management";
+  if (
+    has(
+      "research",
+      "docs",
+      "documentation",
+      "latest version",
+      "current version",
+      "changelog",
+      "release notes",
+      "pricing",
+      "github.com",
+      "http://",
+      "https://",
+      "রিসার্চ",
+    )
+  )
     return "research";
-  if (has("code", "component", "function", "refactor", "bug", "typescript", "react", "কোড"))
+  if (
+    has(
+      "code",
+      "component",
+      "function",
+      "refactor",
+      "bug",
+      "typescript",
+      "javascript",
+      "python",
+      "react",
+      "sql",
+      "api endpoint",
+      "stack trace",
+      "কোড",
+    )
+  )
     return "coding";
-  if (has("why", "explain", "architecture", "plan", "compare", "কেন", "ব্যাখ্যা")) return "reasoning";
+  if (
+    has(
+      "why",
+      "explain",
+      "architecture",
+      "plan",
+      "compare",
+      "trade-off",
+      "tradeoff",
+      "design decision",
+      "কেন",
+      "ব্যাখ্যা",
+    )
+  )
+    return "reasoning";
   return "general_chat";
 }
+
 
 export function capabilityForTask(kind: TaskKind): Capability {
   return TASK_CAPABILITY[kind];
