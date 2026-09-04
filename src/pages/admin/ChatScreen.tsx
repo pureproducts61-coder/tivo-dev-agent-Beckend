@@ -496,9 +496,44 @@ export default function ChatScreen() {
     const assistantId = uid();
     setMessages((m) => [...m, { id: assistantId, role: "assistant", content: "", ts: Date.now() }]);
 
-    const systemPrompt = await buildSystemPrompt();
+    // ── ONE Brain → capability router → a runtime that is really reachable ──
+    const decision = await route(registry, text);
+    const research = await registry.select("research");
+    const systemPrompt = await buildSystemPrompt(!!research.runtime);
 
-    try {
+    const local =
+      decision.runtime && decision.runtime.id !== "cloud" && typeof decision.runtime.generate === "function"
+        ? decision.runtime
+        : null;
+    let localModel: string | null = null;
+    if (local) {
+      const picked = await local.pickModel?.(decision.capability);
+      localModel = picked?.identifier ?? null;
+      if (!localModel) {
+        // Reachable server with no usable model — never pretend it can answer.
+        emitTivoEvent("runtime.unavailable", {
+          conversationId: convId,
+          runtime: local.id,
+          capability: decision.capability,
+          message: "no local model available for this task",
+        });
+      }
+    }
+
+    const applyDelta = (delta: string) => {
+      assistantText += delta;
+      const { clean, artifacts, invalidJson } = extractArtifacts(assistantText);
+      setMessages((m) => {
+        const out = [...m];
+        const idx = out.findIndex((x) => x.id === assistantId);
+        if (idx >= 0) out[idx] = { ...out[idx], content: clean, artifacts, invalidArtifactJson: invalidJson };
+        return out;
+      });
+    };
+
+    /** Cloud AI (Lovable Gateway via the existing ai-engine function). */
+    const runCloud = async () => {
+      setRuntimeStatus("Cloud • ai-engine");
       const res = await fetch(`${BACKEND}/functions/v1/ai-engine/chat`, {
         method: "POST",
         headers: { "Content-Type": "application/json", "x-master-secret": session.masterSecret },
@@ -527,19 +562,39 @@ export default function ChatScreen() {
           try {
             const p = JSON.parse(j);
             const delta = p.choices?.[0]?.delta?.content;
-            if (delta) {
-              assistantText += delta;
-              const { clean, artifacts, invalidJson } = extractArtifacts(assistantText);
-              setMessages((m) => {
-                const out = [...m];
-                const idx = out.findIndex((x) => x.id === assistantId);
-                if (idx >= 0) out[idx] = { ...out[idx], content: clean, artifacts, invalidArtifactJson: invalidJson };
-                return out;
-              });
-            }
+            if (delta) applyDelta(delta);
           } catch {}
         }
       }
+    };
+
+    try {
+      if (local && localModel) {
+        setRuntimeStatus(`Local • ${localModel}`);
+        try {
+          await local.generate!({
+            messages: [{ role: "system", content: systemPrompt }, ...chatHistory],
+            model: localModel,
+            signal: ctrl.signal,
+            onToken: applyDelta,
+          });
+        } catch (localErr: any) {
+          if (localErr?.name === "AbortError") throw localErr;
+          // Truthful fallback: say the local run failed, then really use Cloud.
+          emitTivoEvent("runtime.fallback", {
+            conversationId: convId,
+            runtime: local.id,
+            capability: decision.capability,
+            message: `local runtime failed (${String(localErr?.message || localErr)}) — falling back to Cloud AI`,
+          });
+          assistantText = "";
+          setRuntimeStatus(`Cloud • fallback (local ${localModel} failed)`);
+          await runCloud();
+        }
+      } else {
+        await runCloud();
+      }
+
       // Persist the finished assistant turn exactly once.
       if (assistantText.trim()) {
         await persistMessage(convId, assistantId, "assistant", assistantText);
@@ -563,6 +618,7 @@ export default function ChatScreen() {
       abortRef.current = null;
     }
   }
+
 
   function pushSystem(content: string, artifacts?: Artifact[]) {
     setMessages((m) => [...m, { id: uid(), role: "system", content, artifacts, ts: Date.now() }]);
