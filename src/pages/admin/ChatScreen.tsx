@@ -123,8 +123,27 @@ async function loadConstitution(): Promise<string> {
   return TIVO_CONSTITUTION_FALLBACK;
 }
 
-async function buildSystemPrompt(): Promise<string> {
-  const constitution = await loadConstitution();
+/**
+ * Freshness block — the clock is read at request time, never hardcoded, so the
+ * Brain always knows "now" and knows when it must verify instead of recall.
+ */
+function freshnessBlock(researchAvailable: boolean): string {
+  const now = new Date();
+  return [
+    "\n\n━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━",
+    "⏱  CURRENT TIME & FRESHNESS POLICY",
+    "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━",
+    `Current timestamp (authoritative): ${now.toISOString()} (local: ${now.toString()}).`,
+    "Your training memory is stale. For anything time-sensitive — current library/package versions, current documentation, current APIs, current prices, current news — do NOT answer from memory.",
+    researchAvailable
+      ? "A research/web capability is available: use it to verify, and cite the sources you actually fetched."
+      : "No research/web capability is reachable right now: say plainly that fresh verification is unavailable and mark the answer as unverified.",
+    "Never fabricate a web result, a URL, or a version number you did not verify.",
+  ].join("\n");
+}
+
+async function buildSystemPrompt(researchAvailable: boolean): Promise<string> {
+  const constitution = (await loadConstitution()) + freshnessBlock(researchAvailable);
   try {
     const { data } = await supabase
       .from("ai_variables")
@@ -149,6 +168,7 @@ async function buildSystemPrompt(): Promise<string> {
     return constitution;
   }
 }
+
 
 
 function extractArtifacts(content: string): { clean: string; artifacts: Artifact[]; invalidJson?: string } {
