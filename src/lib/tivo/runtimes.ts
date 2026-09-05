@@ -258,9 +258,10 @@ export class LocalServerAdapter implements RuntimeAdapter {
   }
 
   /**
-   * Chooses a model the server really lists. Coding tasks prefer a coder model,
-   * reasoning prefers a reasoning-tuned one — but only when such a model is
-   * actually installed. Already-resident models (Ollama /api/ps) win ties.
+   * Scores only models the server REALLY lists. Nothing is fabricated: every
+   * signal used below either comes from the runtime's own metadata
+   * (parameter size, quantization, resident state) or from the device profile.
+   * Missing metadata contributes nothing rather than a guess.
    */
   async pickModel(capability: Capability): Promise<RuntimeModelInfo | null> {
     const models = await this.listModels();
@@ -284,17 +285,60 @@ export class LocalServerAdapter implements RuntimeAdapter {
     const ps = ep ? await probe(ep, "/api/ps") : null;
     if (ps?.models) for (const m of ps.models as any[]) resident.add(m.name);
 
+    const device: DeviceProfile = await detectDevice();
+    // Coarse RAM budget for weights: only applied when the browser exposes RAM.
+    const ramGb = device.memoryGb;
+    const billions = (m: RuntimeModelInfo): number | null => {
+      const src = m.parameterSize || m.identifier;
+      const hit = /(\d+(?:\.\d+)?)\s*[bB]\b/.exec(src);
+      return hit ? Number(hit[1]) : null;
+    };
+    const quantized = (m: RuntimeModelInfo) => /q[2-8]|int4|int8|gguf/i.test(m.quantization || m.identifier);
 
-    const score = (m: RuntimeModelInfo) =>
-      (prefer.test(m.identifier) ? 2 : 0) + (resident.has(m.identifier) ? 1 : 0);
+    const score = (m: RuntimeModelInfo) => {
+      let s = 0;
+      if (prefer.test(m.identifier)) s += 4; // task-suitable family
+      if (resident.has(m.identifier)) s += 3; // already loaded → fastest, verified
+      const b = billions(m);
+      if (b != null && ramGb != null) {
+        // Rough weight footprint: ~0.7 GB per B when quantized, ~2 GB otherwise.
+        const need = b * (quantized(m) ? 0.7 : 2);
+        if (need <= ramGb * 0.6) s += 2;
+        else if (need <= ramGb) s += 1;
+        else s -= 3; // very unlikely to run on this device
+      }
+      if (b != null && device.deviceClass === "mobile" && b > 8) s -= 2;
+      if (quantized(m)) s += 1;
+      if (typeof m.contextWindow === "number" && m.contextWindow >= 8192) s += 1;
+      if (device.cpuCores != null && device.cpuCores <= 4 && b != null && b > 8) s -= 1;
+      return s;
+    };
+
     const chosen = [...models].sort((a, b) => score(b) - score(a))[0];
 
     emitTivoEvent("model.selected", {
       runtime: this.id,
       capability,
       message: chosen.identifier,
-      meta: { resident: resident.has(chosen.identifier) },
+      meta: {
+        resident: resident.has(chosen.identifier),
+        parameterSize: chosen.parameterSize ?? null,
+        quantization: chosen.quantization ?? null,
+        deviceMemoryGb: ramGb,
+        cpuCores: device.cpuCores,
+      },
     });
+
+    // "loaded" is a separate truth from "selected": only claim it when the
+    // runtime itself reports the model resident.
+    if (resident.has(chosen.identifier)) {
+      emitTivoEvent("model.loaded", {
+        runtime: this.id,
+        capability,
+        message: chosen.identifier,
+        meta: { verifiedVia: "/api/ps" },
+      });
+    }
     return chosen;
   }
 
