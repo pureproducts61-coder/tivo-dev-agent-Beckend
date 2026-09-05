@@ -489,22 +489,128 @@ export class RuntimeRegistry {
     return this.adapters.find((a) => a.id === id) || null;
   }
 
-  /** Local-first: lowest priority number that actually has the capability AND is healthy. */
-  async select(capability: Capability): Promise<{ runtime: RuntimeAdapter | null; reason: string }> {
-    const candidates = this.all().filter((a) => a.capabilities.includes(capability));
-    if (!candidates.length) return { runtime: null, reason: `no runtime advertises "${capability}"` };
+  /** Legacy adapters without an explicit class are model runtimes. */
+  classOf(a: RuntimeAdapter): RuntimeClass {
+    return a.runtimeClass ?? (a.kind === "builder" || a.kind === "execution" ? "execution" : a.kind === "research" ? "research" : "model");
+  }
+
+  /** Runtimes eligible for a capability: right class AND advertises it. */
+  eligible(capability: Capability): RuntimeAdapter[] {
+    const wanted: CapabilityClass = capabilityClass(capability);
+    return this.all().filter(
+      (a) => a.capabilities.includes(capability) && classForCapability(this.classOf(a)) === wanted,
+    );
+  }
+
+  /**
+   * Local-first capability-aware selection. A runtime is only AVAILABLE when
+   * its own health check passed AND — for execution capabilities — it really
+   * implements the method that capability needs. Anything else is DEGRADED or
+   * UNAVAILABLE, and the caller must say so instead of pretending.
+   */
+  async select(
+    capability: Capability,
+  ): Promise<{ runtime: RuntimeAdapter | null; reason: string; availability: Availability }> {
+    const candidates = this.eligible(capability);
+    if (!candidates.length) {
+      const reason = `no ${capabilityClass(capability)} runtime advertises "${capability}"`;
+      emitTivoEvent("runtime.unavailable", { capability, message: reason });
+      return { runtime: null, reason, availability: "UNAVAILABLE" };
+    }
+
     const reasons: string[] = [];
+    let degraded: { runtime: RuntimeAdapter; reason: string } | null = null;
+
     for (const a of candidates) {
       const h = await a.health();
-      if (h.online) {
-        emitTivoEvent("runtime.selected", { runtime: a.id, capability, message: a.label });
-        return { runtime: a, reason: `${a.label} is online` };
+      if (!h.online) {
+        reasons.push(`${a.label}: ${h.error || "offline"}`);
+        continue;
       }
-      reasons.push(`${a.label}: ${h.error || "offline"}`);
+      if (h.degraded) {
+        degraded ??= { runtime: a, reason: `${a.label}: ${h.error || "reachable but not fully capable"}` };
+        reasons.push(`${a.label}: ${h.error || "degraded"}`);
+        continue;
+      }
+      // Execution truth: the method that performs this capability must exist.
+      const needed = EXECUTION_METHOD_FOR[capability];
+      if (capabilityClass(capability) === "execution" && needed && typeof (a as any)[needed] !== "function") {
+        const why = `${a.label} is reachable but has no ${String(needed)}() execution binding`;
+        degraded ??= { runtime: a, reason: why };
+        reasons.push(why);
+        continue;
+      }
+      // Inference truth: the runtime must really be able to generate.
+      if (capabilityClass(capability) === "inference" && a.runtimeClass === "model" && a.listModels && !a.generate) {
+        const why = `${a.label} cannot run inference from this client`;
+        degraded ??= { runtime: a, reason: why };
+        reasons.push(why);
+        continue;
+      }
+      emitTivoEvent("runtime.selected", { runtime: a.id, capability, message: a.label });
+      return { runtime: a, reason: `${a.label} is online`, availability: "AVAILABLE" };
     }
+
+    if (degraded) {
+      emitTivoEvent("runtime.unavailable", {
+        capability,
+        runtime: degraded.runtime.id,
+        message: degraded.reason,
+        meta: { availability: "DEGRADED" },
+      });
+      return { runtime: null, reason: degraded.reason, availability: "DEGRADED" };
+    }
+
     emitTivoEvent("runtime.unavailable", { capability, meta: { reasons } });
-    return { runtime: null, reason: reasons.join(" · ") };
+    return { runtime: null, reason: reasons.join(" · "), availability: "UNAVAILABLE" };
   }
+
+  /** Inference-only selection (chat/coding/reasoning). */
+  selectInference(capability: Capability) {
+    return this.select(capabilityClass(capability) === "inference" ? capability : "chat");
+  }
+
+  /** Execution-only selection — never satisfied by a model runtime. */
+  async selectExecution(capability: Capability) {
+    if (capabilityClass(capability) !== "execution") {
+      return {
+        runtime: null,
+        reason: `"${capability}" is not an execution capability`,
+        availability: "UNAVAILABLE" as Availability,
+      };
+    }
+    return this.select(capability);
+  }
+
+  /** Secret-free descriptors for status surfaces. */
+  async describe(): Promise<RuntimeDescriptor[]> {
+    const out: RuntimeDescriptor[] = [];
+    for (const a of this.all()) {
+      const h = await a.health();
+      let models: RuntimeModelInfo[] | null = null;
+      if (h.online && a.listModels) models = await a.listModels().catch(() => null);
+      out.push({
+        id: a.id,
+        label: a.label,
+        kind: a.kind,
+        runtimeClass: this.classOf(a),
+        capabilities: a.capabilities,
+        priority: a.priority,
+        endpoint: (h.detail?.endpoint as string) ?? null,
+        version: h.version ?? null,
+        resources: h.resources ?? null,
+        models,
+        status: !h.online ? "UNAVAILABLE" : h.degraded ? "DEGRADED" : "AVAILABLE",
+        reason: h.error,
+      });
+    }
+    return out;
+  }
+}
+
+/** A runtime class serves exactly one capability class. */
+function classForCapability(rc: RuntimeClass): CapabilityClass {
+  return rc === "model" ? "inference" : rc === "research" ? "research" : "execution";
 }
 
 export function createRuntimeRegistry(opts: {
