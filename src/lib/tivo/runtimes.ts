@@ -8,17 +8,34 @@
  * The Brain talks to this registry, never to a specific vendor.
  */
 
-import type { Capability } from "./capabilities";
+import { capabilityClass, type Availability, type Capability, type CapabilityClass } from "./capabilities";
 import { emitTivoEvent } from "./events";
+import { detectDevice, type DeviceProfile } from "./device";
 
-export type RuntimeKind = "local_server" | "cloud" | "builder" | "native";
+export type RuntimeKind = "local_server" | "cloud" | "builder" | "native" | "execution" | "research";
+
+/**
+ * MODEL runtime  = can run inference (Ollama, LM Studio, Cloud AI, HF inference).
+ * EXECUTION runtime = can really touch files / run commands / build / test / deploy.
+ * RESEARCH runtime = can really perform live search / fetch.
+ * A model runtime is NEVER promoted to an execution runtime just because it can
+ * describe a build in text.
+ */
+export type RuntimeClass = "model" | "execution" | "research";
 
 export interface RuntimeHealth {
   online: boolean;
   checkedAt: number;
-  /** Truthful reason when offline/unreachable. */
+  /**
+   * Reachable but not fully capable (e.g. local server with zero models). The
+   * registry reports these as DEGRADED, never as AVAILABLE.
+   */
+  degraded?: boolean;
+  /** Truthful reason when offline/unreachable/degraded. */
   error?: string;
   detail?: Record<string, unknown>;
+  version?: string | null;
+  resources?: Record<string, unknown>;
 }
 
 export interface RuntimeModelInfo {
@@ -29,10 +46,70 @@ export interface RuntimeModelInfo {
   quantization?: string | null;
 }
 
+/** Descriptor shown to the UI — future-proof, secret-free. */
+export interface RuntimeDescriptor {
+  id: string;
+  label: string;
+  kind: RuntimeKind;
+  runtimeClass: RuntimeClass;
+  capabilities: Capability[];
+  priority: number;
+  endpoint: string | null;
+  version: string | null;
+  resources: Record<string, unknown> | null;
+  models: RuntimeModelInfo[] | null;
+  status: Availability;
+  reason?: string;
+}
+
+/**
+ * Contract for a real execution runtime (local bridge, Replit, GitHub Actions,
+ * HF builder…). Nothing here is optional-by-convenience: a runtime that does
+ * not implement a method simply cannot perform that capability, and the
+ * registry reports it as DEGRADED instead of pretending.
+ */
+export interface ExecutionRunResult {
+  ok: boolean;
+  exitCode?: number | null;
+  output?: string;
+  logsUrl?: string | null;
+  artifacts?: Array<{ name: string; url?: string; size?: number }>;
+  /** Truthful failure reason when ok === false. */
+  error?: string;
+  runId?: string | null;
+}
+
+export interface ExecutionRuntimeAdapter extends RuntimeAdapter {
+  runtimeClass: "execution";
+  execute?(req: { command: string; cwd?: string; signal?: AbortSignal }): Promise<ExecutionRunResult>;
+  build?(req: { projectId: string; target?: string; signal?: AbortSignal }): Promise<ExecutionRunResult>;
+  test?(req: { projectId: string; signal?: AbortSignal }): Promise<ExecutionRunResult>;
+  deploy?(req: { projectId: string; signal?: AbortSignal }): Promise<ExecutionRunResult>;
+  publish?(req: { projectId: string; signal?: AbortSignal }): Promise<ExecutionRunResult>;
+  getLogs?(runId: string): Promise<string>;
+  cancel?(runId: string): Promise<boolean>;
+  artifacts?(runId: string): Promise<Array<{ name: string; url?: string; size?: number }>>;
+}
+
+/** Execution methods a capability needs before it can be called AVAILABLE. */
+const EXECUTION_METHOD_FOR: Partial<Record<Capability, keyof ExecutionRuntimeAdapter>> = {
+  command_execute: "execute",
+  file_read: "execute",
+  file_write: "execute",
+  build: "build",
+  apk_build: "build",
+  exe_build: "build",
+  test: "test",
+  deploy: "deploy",
+  artifact: "artifacts",
+};
+
 export interface RuntimeAdapter {
   id: string;
   label: string;
   kind: RuntimeKind;
+  /** Defaults to "model" for legacy adapters that predate the split. */
+  runtimeClass?: RuntimeClass;
   capabilities: Capability[];
   /** Lower number = preferred. Local-first ordering lives here. */
   priority: number;
