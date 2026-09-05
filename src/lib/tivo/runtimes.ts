@@ -416,7 +416,12 @@ export class CloudAdapter implements RuntimeAdapter {
   id = "cloud";
   label = "Cloud AI (Lovable Gateway)";
   kind: RuntimeKind = "cloud";
-  capabilities: Capability[] = ["chat", "coding", "reasoning", "research"];
+  runtimeClass: RuntimeClass = "model";
+  /**
+   * Inference only. "research" is deliberately NOT advertised: a text model
+   * without a live search/fetch adapter cannot research anything truthfully.
+   */
+  capabilities: Capability[] = ["chat", "coding", "reasoning"];
   priority = 90;
 
   constructor(private backend: string, private masterSecret: string) {}
@@ -434,13 +439,16 @@ export class CloudAdapter implements RuntimeAdapter {
 }
 
 /**
- * Existing HF Docker build server — a build capability runtime, not an AI one.
- * Its endpoint is configured per project/action; capability advertising only.
+ * Existing HF Docker build server — an EXECUTION runtime, not an AI one.
+ * It advertises build capabilities, but until a real client-side execution
+ * binding exists the registry reports those capabilities as DEGRADED, so
+ * nothing can claim a build ran through it.
  */
 export class BuilderAdapter implements RuntimeAdapter {
   id = "hf-builder";
   label = "Build Runtime (HF Docker)";
   kind: RuntimeKind = "builder";
+  runtimeClass: RuntimeClass = "execution";
   capabilities: Capability[] = ["build", "apk_build", "exe_build", "artifact"];
   priority = 50;
 
@@ -455,7 +463,12 @@ export class BuilderAdapter implements RuntimeAdapter {
       };
     const j = await probe(this.endpoint, "/health", 4000);
     return j
-      ? { online: true, checkedAt: Date.now(), detail: { endpoint: this.endpoint } }
+      ? {
+          online: true,
+          checkedAt: Date.now(),
+          version: typeof j?.version === "string" ? j.version : null,
+          detail: { endpoint: this.endpoint },
+        }
       : { online: false, checkedAt: Date.now(), error: "build runtime did not answer /health" };
   }
 }
