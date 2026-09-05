@@ -29,6 +29,53 @@ export const CAPABILITIES = [
 
 export type Capability = (typeof CAPABILITIES)[number];
 
+/**
+ * A capability class says WHAT KIND of runtime can honestly serve it.
+ * A model runtime (Ollama / LM Studio / Cloud AI) serves `inference` only.
+ * Everything that touches files, commands, builds, tests, artifacts or
+ * deployments needs an `execution` runtime. Live research needs a `research`
+ * runtime. Text generation is never a substitute for the other two.
+ */
+export type CapabilityClass = "inference" | "execution" | "research";
+
+export const CAPABILITY_CLASS: Record<Capability, CapabilityClass> = {
+  chat: "inference",
+  coding: "inference",
+  reasoning: "inference",
+  research: "research",
+  browser: "research",
+  file_read: "execution",
+  file_write: "execution",
+  command_execute: "execution",
+  build: "execution",
+  apk_build: "execution",
+  exe_build: "execution",
+  test: "execution",
+  security_scan: "execution",
+  deploy: "execution",
+  artifact: "execution",
+  model_management: "execution",
+};
+
+export function capabilityClass(c: Capability): CapabilityClass {
+  return CAPABILITY_CLASS[c];
+}
+
+/** Cloud text generation may only ever be a fallback for inference work. */
+export function cloudFallbackAllowed(c: Capability): boolean {
+  return capabilityClass(c) === "inference";
+}
+
+/**
+ * Truthful availability of a capability right now.
+ *  AVAILABLE   — a runtime that can really perform it is reachable.
+ *  DEGRADED    — a runtime is reachable but cannot fully perform it yet
+ *                (e.g. local server online with no usable model, build server
+ *                online but no execution binding wired).
+ *  UNAVAILABLE — nothing can perform it.
+ */
+export type Availability = "AVAILABLE" | "DEGRADED" | "UNAVAILABLE";
+
 /** Coarse task categories the Brain derives from user intent. */
 export type TaskKind =
   | "general_chat"

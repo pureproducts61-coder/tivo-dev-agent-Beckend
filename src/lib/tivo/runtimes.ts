@@ -8,17 +8,34 @@
  * The Brain talks to this registry, never to a specific vendor.
  */
 
-import type { Capability } from "./capabilities";
+import { capabilityClass, type Availability, type Capability, type CapabilityClass } from "./capabilities";
 import { emitTivoEvent } from "./events";
+import { detectDevice, type DeviceProfile } from "./device";
 
-export type RuntimeKind = "local_server" | "cloud" | "builder" | "native";
+export type RuntimeKind = "local_server" | "cloud" | "builder" | "native" | "execution" | "research";
+
+/**
+ * MODEL runtime  = can run inference (Ollama, LM Studio, Cloud AI, HF inference).
+ * EXECUTION runtime = can really touch files / run commands / build / test / deploy.
+ * RESEARCH runtime = can really perform live search / fetch.
+ * A model runtime is NEVER promoted to an execution runtime just because it can
+ * describe a build in text.
+ */
+export type RuntimeClass = "model" | "execution" | "research";
 
 export interface RuntimeHealth {
   online: boolean;
   checkedAt: number;
-  /** Truthful reason when offline/unreachable. */
+  /**
+   * Reachable but not fully capable (e.g. local server with zero models). The
+   * registry reports these as DEGRADED, never as AVAILABLE.
+   */
+  degraded?: boolean;
+  /** Truthful reason when offline/unreachable/degraded. */
   error?: string;
   detail?: Record<string, unknown>;
+  version?: string | null;
+  resources?: Record<string, unknown>;
 }
 
 export interface RuntimeModelInfo {
@@ -29,10 +46,70 @@ export interface RuntimeModelInfo {
   quantization?: string | null;
 }
 
+/** Descriptor shown to the UI — future-proof, secret-free. */
+export interface RuntimeDescriptor {
+  id: string;
+  label: string;
+  kind: RuntimeKind;
+  runtimeClass: RuntimeClass;
+  capabilities: Capability[];
+  priority: number;
+  endpoint: string | null;
+  version: string | null;
+  resources: Record<string, unknown> | null;
+  models: RuntimeModelInfo[] | null;
+  status: Availability;
+  reason?: string;
+}
+
+/**
+ * Contract for a real execution runtime (local bridge, Replit, GitHub Actions,
+ * HF builder…). Nothing here is optional-by-convenience: a runtime that does
+ * not implement a method simply cannot perform that capability, and the
+ * registry reports it as DEGRADED instead of pretending.
+ */
+export interface ExecutionRunResult {
+  ok: boolean;
+  exitCode?: number | null;
+  output?: string;
+  logsUrl?: string | null;
+  artifacts?: Array<{ name: string; url?: string; size?: number }>;
+  /** Truthful failure reason when ok === false. */
+  error?: string;
+  runId?: string | null;
+}
+
+export interface ExecutionRuntimeAdapter extends RuntimeAdapter {
+  runtimeClass: "execution";
+  execute?(req: { command: string; cwd?: string; signal?: AbortSignal }): Promise<ExecutionRunResult>;
+  build?(req: { projectId: string; target?: string; signal?: AbortSignal }): Promise<ExecutionRunResult>;
+  test?(req: { projectId: string; signal?: AbortSignal }): Promise<ExecutionRunResult>;
+  deploy?(req: { projectId: string; signal?: AbortSignal }): Promise<ExecutionRunResult>;
+  publish?(req: { projectId: string; signal?: AbortSignal }): Promise<ExecutionRunResult>;
+  getLogs?(runId: string): Promise<string>;
+  cancel?(runId: string): Promise<boolean>;
+  artifacts?(runId: string): Promise<Array<{ name: string; url?: string; size?: number }>>;
+}
+
+/** Execution methods a capability needs before it can be called AVAILABLE. */
+const EXECUTION_METHOD_FOR: Partial<Record<Capability, keyof ExecutionRuntimeAdapter>> = {
+  command_execute: "execute",
+  file_read: "execute",
+  file_write: "execute",
+  build: "build",
+  apk_build: "build",
+  exe_build: "build",
+  test: "test",
+  deploy: "deploy",
+  artifact: "artifacts",
+};
+
 export interface RuntimeAdapter {
   id: string;
   label: string;
   kind: RuntimeKind;
+  /** Defaults to "model" for legacy adapters that predate the split. */
+  runtimeClass?: RuntimeClass;
   capabilities: Capability[];
   /** Lower number = preferred. Local-first ordering lives here. */
   priority: number;
@@ -109,6 +186,7 @@ export class LocalServerAdapter implements RuntimeAdapter {
   id = "local_server";
   label = "Local LLM Server";
   kind: RuntimeKind = "local_server";
+  runtimeClass: RuntimeClass = "model";
   capabilities: Capability[] = ["chat", "coding", "reasoning"];
   priority = 0;
 
@@ -181,9 +259,10 @@ export class LocalServerAdapter implements RuntimeAdapter {
   }
 
   /**
-   * Chooses a model the server really lists. Coding tasks prefer a coder model,
-   * reasoning prefers a reasoning-tuned one — but only when such a model is
-   * actually installed. Already-resident models (Ollama /api/ps) win ties.
+   * Scores only models the server REALLY lists. Nothing is fabricated: every
+   * signal used below either comes from the runtime's own metadata
+   * (parameter size, quantization, resident state) or from the device profile.
+   * Missing metadata contributes nothing rather than a guess.
    */
   async pickModel(capability: Capability): Promise<RuntimeModelInfo | null> {
     const models = await this.listModels();
@@ -207,17 +286,60 @@ export class LocalServerAdapter implements RuntimeAdapter {
     const ps = ep ? await probe(ep, "/api/ps") : null;
     if (ps?.models) for (const m of ps.models as any[]) resident.add(m.name);
 
+    const device: DeviceProfile = await detectDevice();
+    // Coarse RAM budget for weights: only applied when the browser exposes RAM.
+    const ramGb = device.memoryGb;
+    const billions = (m: RuntimeModelInfo): number | null => {
+      const src = m.parameterSize || m.identifier;
+      const hit = /(\d+(?:\.\d+)?)\s*[bB]\b/.exec(src);
+      return hit ? Number(hit[1]) : null;
+    };
+    const quantized = (m: RuntimeModelInfo) => /q[2-8]|int4|int8|gguf/i.test(m.quantization || m.identifier);
 
-    const score = (m: RuntimeModelInfo) =>
-      (prefer.test(m.identifier) ? 2 : 0) + (resident.has(m.identifier) ? 1 : 0);
+    const score = (m: RuntimeModelInfo) => {
+      let s = 0;
+      if (prefer.test(m.identifier)) s += 4; // task-suitable family
+      if (resident.has(m.identifier)) s += 3; // already loaded → fastest, verified
+      const b = billions(m);
+      if (b != null && ramGb != null) {
+        // Rough weight footprint: ~0.7 GB per B when quantized, ~2 GB otherwise.
+        const need = b * (quantized(m) ? 0.7 : 2);
+        if (need <= ramGb * 0.6) s += 2;
+        else if (need <= ramGb) s += 1;
+        else s -= 3; // very unlikely to run on this device
+      }
+      if (b != null && device.deviceClass === "mobile" && b > 8) s -= 2;
+      if (quantized(m)) s += 1;
+      if (typeof m.contextWindow === "number" && m.contextWindow >= 8192) s += 1;
+      if (device.cpuCores != null && device.cpuCores <= 4 && b != null && b > 8) s -= 1;
+      return s;
+    };
+
     const chosen = [...models].sort((a, b) => score(b) - score(a))[0];
 
     emitTivoEvent("model.selected", {
       runtime: this.id,
       capability,
       message: chosen.identifier,
-      meta: { resident: resident.has(chosen.identifier) },
+      meta: {
+        resident: resident.has(chosen.identifier),
+        parameterSize: chosen.parameterSize ?? null,
+        quantization: chosen.quantization ?? null,
+        deviceMemoryGb: ramGb,
+        cpuCores: device.cpuCores,
+      },
     });
+
+    // "loaded" is a separate truth from "selected": only claim it when the
+    // runtime itself reports the model resident.
+    if (resident.has(chosen.identifier)) {
+      emitTivoEvent("model.loaded", {
+        runtime: this.id,
+        capability,
+        message: chosen.identifier,
+        meta: { verifiedVia: "/api/ps" },
+      });
+    }
     return chosen;
   }
 
@@ -294,7 +416,12 @@ export class CloudAdapter implements RuntimeAdapter {
   id = "cloud";
   label = "Cloud AI (Lovable Gateway)";
   kind: RuntimeKind = "cloud";
-  capabilities: Capability[] = ["chat", "coding", "reasoning", "research"];
+  runtimeClass: RuntimeClass = "model";
+  /**
+   * Inference only. "research" is deliberately NOT advertised: a text model
+   * without a live search/fetch adapter cannot research anything truthfully.
+   */
+  capabilities: Capability[] = ["chat", "coding", "reasoning"];
   priority = 90;
 
   constructor(private backend: string, private masterSecret: string) {}
@@ -312,13 +439,16 @@ export class CloudAdapter implements RuntimeAdapter {
 }
 
 /**
- * Existing HF Docker build server — a build capability runtime, not an AI one.
- * Its endpoint is configured per project/action; capability advertising only.
+ * Existing HF Docker build server — an EXECUTION runtime, not an AI one.
+ * It advertises build capabilities, but until a real client-side execution
+ * binding exists the registry reports those capabilities as DEGRADED, so
+ * nothing can claim a build ran through it.
  */
 export class BuilderAdapter implements RuntimeAdapter {
   id = "hf-builder";
   label = "Build Runtime (HF Docker)";
   kind: RuntimeKind = "builder";
+  runtimeClass: RuntimeClass = "execution";
   capabilities: Capability[] = ["build", "apk_build", "exe_build", "artifact"];
   priority = 50;
 
@@ -333,7 +463,12 @@ export class BuilderAdapter implements RuntimeAdapter {
       };
     const j = await probe(this.endpoint, "/health", 4000);
     return j
-      ? { online: true, checkedAt: Date.now(), detail: { endpoint: this.endpoint } }
+      ? {
+          online: true,
+          checkedAt: Date.now(),
+          version: typeof j?.version === "string" ? j.version : null,
+          detail: { endpoint: this.endpoint },
+        }
       : { online: false, checkedAt: Date.now(), error: "build runtime did not answer /health" };
   }
 }
@@ -354,22 +489,128 @@ export class RuntimeRegistry {
     return this.adapters.find((a) => a.id === id) || null;
   }
 
-  /** Local-first: lowest priority number that actually has the capability AND is healthy. */
-  async select(capability: Capability): Promise<{ runtime: RuntimeAdapter | null; reason: string }> {
-    const candidates = this.all().filter((a) => a.capabilities.includes(capability));
-    if (!candidates.length) return { runtime: null, reason: `no runtime advertises "${capability}"` };
+  /** Legacy adapters without an explicit class are model runtimes. */
+  classOf(a: RuntimeAdapter): RuntimeClass {
+    return a.runtimeClass ?? (a.kind === "builder" || a.kind === "execution" ? "execution" : a.kind === "research" ? "research" : "model");
+  }
+
+  /** Runtimes eligible for a capability: right class AND advertises it. */
+  eligible(capability: Capability): RuntimeAdapter[] {
+    const wanted: CapabilityClass = capabilityClass(capability);
+    return this.all().filter(
+      (a) => a.capabilities.includes(capability) && classForCapability(this.classOf(a)) === wanted,
+    );
+  }
+
+  /**
+   * Local-first capability-aware selection. A runtime is only AVAILABLE when
+   * its own health check passed AND — for execution capabilities — it really
+   * implements the method that capability needs. Anything else is DEGRADED or
+   * UNAVAILABLE, and the caller must say so instead of pretending.
+   */
+  async select(
+    capability: Capability,
+  ): Promise<{ runtime: RuntimeAdapter | null; reason: string; availability: Availability }> {
+    const candidates = this.eligible(capability);
+    if (!candidates.length) {
+      const reason = `no ${capabilityClass(capability)} runtime advertises "${capability}"`;
+      emitTivoEvent("runtime.unavailable", { capability, message: reason });
+      return { runtime: null, reason, availability: "UNAVAILABLE" };
+    }
+
     const reasons: string[] = [];
+    let degraded: { runtime: RuntimeAdapter; reason: string } | null = null;
+
     for (const a of candidates) {
       const h = await a.health();
-      if (h.online) {
-        emitTivoEvent("runtime.selected", { runtime: a.id, capability, message: a.label });
-        return { runtime: a, reason: `${a.label} is online` };
+      if (!h.online) {
+        reasons.push(`${a.label}: ${h.error || "offline"}`);
+        continue;
       }
-      reasons.push(`${a.label}: ${h.error || "offline"}`);
+      if (h.degraded) {
+        degraded ??= { runtime: a, reason: `${a.label}: ${h.error || "reachable but not fully capable"}` };
+        reasons.push(`${a.label}: ${h.error || "degraded"}`);
+        continue;
+      }
+      // Execution truth: the method that performs this capability must exist.
+      const needed = EXECUTION_METHOD_FOR[capability];
+      if (capabilityClass(capability) === "execution" && needed && typeof (a as any)[needed] !== "function") {
+        const why = `${a.label} is reachable but has no ${String(needed)}() execution binding`;
+        degraded ??= { runtime: a, reason: why };
+        reasons.push(why);
+        continue;
+      }
+      // Inference truth: the runtime must really be able to generate.
+      if (capabilityClass(capability) === "inference" && a.runtimeClass === "model" && a.listModels && !a.generate) {
+        const why = `${a.label} cannot run inference from this client`;
+        degraded ??= { runtime: a, reason: why };
+        reasons.push(why);
+        continue;
+      }
+      emitTivoEvent("runtime.selected", { runtime: a.id, capability, message: a.label });
+      return { runtime: a, reason: `${a.label} is online`, availability: "AVAILABLE" };
     }
+
+    if (degraded) {
+      emitTivoEvent("runtime.unavailable", {
+        capability,
+        runtime: degraded.runtime.id,
+        message: degraded.reason,
+        meta: { availability: "DEGRADED" },
+      });
+      return { runtime: null, reason: degraded.reason, availability: "DEGRADED" };
+    }
+
     emitTivoEvent("runtime.unavailable", { capability, meta: { reasons } });
-    return { runtime: null, reason: reasons.join(" · ") };
+    return { runtime: null, reason: reasons.join(" · "), availability: "UNAVAILABLE" };
   }
+
+  /** Inference-only selection (chat/coding/reasoning). */
+  selectInference(capability: Capability) {
+    return this.select(capabilityClass(capability) === "inference" ? capability : "chat");
+  }
+
+  /** Execution-only selection — never satisfied by a model runtime. */
+  async selectExecution(capability: Capability) {
+    if (capabilityClass(capability) !== "execution") {
+      return {
+        runtime: null,
+        reason: `"${capability}" is not an execution capability`,
+        availability: "UNAVAILABLE" as Availability,
+      };
+    }
+    return this.select(capability);
+  }
+
+  /** Secret-free descriptors for status surfaces. */
+  async describe(): Promise<RuntimeDescriptor[]> {
+    const out: RuntimeDescriptor[] = [];
+    for (const a of this.all()) {
+      const h = await a.health();
+      let models: RuntimeModelInfo[] | null = null;
+      if (h.online && a.listModels) models = await a.listModels().catch(() => null);
+      out.push({
+        id: a.id,
+        label: a.label,
+        kind: a.kind,
+        runtimeClass: this.classOf(a),
+        capabilities: a.capabilities,
+        priority: a.priority,
+        endpoint: (h.detail?.endpoint as string) ?? null,
+        version: h.version ?? null,
+        resources: h.resources ?? null,
+        models,
+        status: !h.online ? "UNAVAILABLE" : h.degraded ? "DEGRADED" : "AVAILABLE",
+        reason: h.error,
+      });
+    }
+    return out;
+  }
+}
+
+/** A runtime class serves exactly one capability class. */
+function classForCapability(rc: RuntimeClass): CapabilityClass {
+  return rc === "model" ? "inference" : rc === "research" ? "research" : "execution";
 }
 
 export function createRuntimeRegistry(opts: {
