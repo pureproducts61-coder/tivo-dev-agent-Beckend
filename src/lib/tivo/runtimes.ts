@@ -186,6 +186,7 @@ export class LocalServerAdapter implements RuntimeAdapter {
   id = "local_server";
   label = "Local LLM Server";
   kind: RuntimeKind = "local_server";
+  runtimeClass: RuntimeClass = "model";
   capabilities: Capability[] = ["chat", "coding", "reasoning"];
   priority = 0;
 
