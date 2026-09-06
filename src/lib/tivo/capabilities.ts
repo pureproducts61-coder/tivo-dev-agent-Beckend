@@ -74,7 +74,7 @@ export function cloudFallbackAllowed(c: Capability): boolean {
  *                online but no execution binding wired).
  *  UNAVAILABLE — nothing can perform it.
  */
-export type Availability = "AVAILABLE" | "DEGRADED" | "UNAVAILABLE";
+export type Availability = "AVAILABLE" | "DEGRADED" | "UNAVAILABLE" | "UNKNOWN";
 
 /** Coarse task categories the Brain derives from user intent. */
 export type TaskKind =
