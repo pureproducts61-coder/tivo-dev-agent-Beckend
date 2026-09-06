@@ -767,6 +767,96 @@ serve(async (req) => {
     }
 
     // ============================================================
+    // === EXECUTION BRIDGE (job_queue) — Cloud Brain → Replit Hands ===
+    // The Brain enqueues a real job; a real worker claims it. Nothing here
+    // ever fabricates a result: status/result/error come straight from the row.
+    // ============================================================
+    const JOB_KINDS = [
+      "command.execute", "file.write", "project.build", "project.test",
+      "project.deploy", "apk.build", "exe.build", "playwright.run", "proposal.execute",
+    ];
+    const WORKER_FRESH_MS = 15 * 60 * 1000;
+
+    if (action === "jobs/enqueue" && req.method === "POST") {
+      if (!isSA) return jsonResponse({ error: "Super Admin only" }, 403);
+      if (!supabase) return jsonResponse({ error: "DB unavailable" }, 503);
+      const kind = String(body?.kind || "");
+      if (!JOB_KINDS.includes(kind)) return jsonResponse({ error: `Unsupported job kind: ${kind}` }, 400);
+      const priority = Math.min(Math.max(Number(body?.priority ?? 5), 1), 9);
+      const { data, error } = await supabase
+        .from("job_queue")
+        .insert({ tenant_id: writeTenant, kind, priority, payload: body?.payload ?? {} })
+        .select("id, kind, status, created_at")
+        .single();
+      if (error) return jsonResponse((console.error("[db_error]", error), { error: "Database operation failed" }), 500);
+      await audit("tivo", "job.enqueued", data.id, { kind });
+      return jsonResponse({ ok: true, job: data });
+    }
+
+    if (action === "jobs/get" && req.method === "GET") {
+      if (!isSA) return jsonResponse({ error: "Super Admin only" }, 403);
+      if (!supabase) return jsonResponse({ error: "DB unavailable" }, 503);
+      const id = url.searchParams.get("id") || "";
+      if (!id) return jsonResponse({ error: "id required" }, 400);
+      let q = supabase.from("job_queue")
+        .select("id, kind, status, result, error, claimed_by, attempts, started_at, finished_at, created_at")
+        .eq("id", id);
+      q = tFilter(q);
+      const { data, error } = await q.maybeSingle();
+      if (error) return jsonResponse((console.error("[db_error]", error), { error: "Database operation failed" }), 500);
+      if (!data) return jsonResponse({ error: "Job not found" }, 404);
+      return jsonResponse({ ok: true, job: data });
+    }
+
+    if (action === "jobs/list" && req.method === "GET") {
+      if (!isSA) return jsonResponse({ error: "Super Admin only" }, 403);
+      if (!supabase) return jsonResponse({ error: "DB unavailable" }, 503);
+      let q = supabase.from("job_queue")
+        .select("id, kind, status, error, claimed_by, created_at, finished_at")
+        .order("created_at", { ascending: false })
+        .limit(Math.min(Number(url.searchParams.get("limit")) || 25, 100));
+      q = tFilter(q);
+      const { data, error } = await q;
+      if (error) return jsonResponse((console.error("[db_error]", error), { error: "Database operation failed" }), 500);
+      return jsonResponse({ ok: true, jobs: data || [] });
+    }
+
+    // Truthful execution-runtime evidence: has a real worker touched the queue?
+    if (action === "runtime/status" && req.method === "GET") {
+      if (!isSA) return jsonResponse({ error: "Super Admin only" }, 403);
+      if (!supabase) return jsonResponse({ error: "DB unavailable" }, 503);
+      let q = supabase.from("job_queue")
+        .select("id, status, claimed_by, started_at, finished_at, created_at")
+        .not("claimed_by", "is", null)
+        .order("started_at", { ascending: false })
+        .limit(20);
+      q = tFilter(q);
+      const { data: claimed } = await q;
+      let pq = supabase.from("job_queue").select("id", { count: "exact", head: true }).eq("status", "pending");
+      pq = tFilter(pq);
+      const { count: pending } = await pq;
+      const rows = claimed || [];
+      const lastSeenAt = rows[0]?.started_at || rows[0]?.finished_at || null;
+      const ageMs = lastSeenAt ? Date.now() - new Date(lastSeenAt).getTime() : null;
+      const workers = Array.from(new Set(rows
+        .filter((r: any) => r.started_at && Date.now() - new Date(r.started_at).getTime() < WORKER_FRESH_MS)
+        .map((r: any) => r.claimed_by)));
+      return jsonResponse({
+        ok: true,
+        execution_runtime: {
+          // Evidence only — no worker has ever claimed a job ⇒ UNKNOWN, not "connected".
+          state: workers.length ? "active" : lastSeenAt ? "stale" : "never_seen",
+          workers,
+          last_seen_at: lastSeenAt,
+          last_seen_age_ms: ageMs,
+          fresh_window_ms: WORKER_FRESH_MS,
+          pending_jobs: pending ?? 0,
+          supported_kinds: JOB_KINDS,
+        },
+      });
+    }
+
+    // ============================================================
     // === MODEL REGISTRY (backend-only, Super Admin gated) ===
     // Registry rows are never client-readable; every operation goes through here.
     // Remote provider models stay source_kind='remote_api' — a downloaded file is
