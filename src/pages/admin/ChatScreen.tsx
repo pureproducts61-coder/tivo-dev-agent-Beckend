@@ -12,6 +12,8 @@ import { logAudit } from "@/lib/audit";
 import { createRuntimeRegistry } from "@/lib/tivo/runtimes";
 import { route } from "@/lib/tivo/router";
 import { emitTivoEvent } from "@/lib/tivo/events";
+import { capabilityClass, type Capability } from "@/lib/tivo/capabilities";
+import type { ExecutionRuntimeAdapter } from "@/lib/tivo/runtimes";
 
 
 
@@ -498,6 +500,19 @@ export default function ChatScreen() {
 
     // ── ONE Brain → capability router → a runtime that is really reachable ──
     const decision = await route(registry, text);
+    // ── Execution path: real work goes to the registered execution runtime ──
+    // Cheap gate on top of the classifier: only explicit imperative requests
+    // ("build …", "run tests", "deploy", "/run <cmd>") are treated as execution.
+    const cmdMatch = /^\s*(?:\/run|\$)\s+(.+)$/s.exec(text);
+    const execCap = cmdMatch ? "command_execute" : decision.capability;
+    const imperative =
+      !!cmdMatch ||
+      /^\s*(?:please\s+)?(build|compile|run\s+(?:the\s+)?tests?|test|deploy|publish)\b/i.test(text) ||
+      /(বিল্ড|টেস্ট|ডিপ্লয়|পাবলিশ)\s*(করো|কর|দাও)/.test(text);
+    if (imperative && capabilityClass(execCap as any) === "execution") {
+      await runExecution(execCap as any, cmdMatch?.[1]?.trim() ?? null, convId, assistantId, ctrl);
+      return;
+    }
     const research = await registry.select("research");
     const systemPrompt = await buildSystemPrompt(!!research.runtime);
 
@@ -619,6 +634,80 @@ export default function ChatScreen() {
     }
   }
 
+
+  /**
+   * Runs an execution capability through the real job_queue runtime.
+   * "completed" is only ever emitted when the queue row itself reached `done`.
+   */
+  async function runExecution(
+    capability: Capability,
+    command: string | null,
+    convId: string | null,
+    assistantId: string,
+    ctrl: AbortController,
+  ) {
+    const say = (content: string) =>
+      setMessages((m) => m.map((x) => (x.id === assistantId ? { ...x, content } : x)));
+    const base = capability === "command_execute" ? "command" : capability === "deploy" ? "deployment" : capability === "test" ? "test" : "build";
+    try {
+      emitTivoEvent("task.created", { conversationId: convId, capability, message: `${capability} requested` });
+      setStatusText("🔧 Checking execution runtime...");
+      const sel = await registry.selectExecution(capability);
+      if (!sel.runtime) {
+        setRuntimeStatus(`Execution • ${sel.availability.toLowerCase()}`);
+        emitTivoEvent("task.failed", { conversationId: convId, capability, message: sel.reason, meta: { availability: sel.availability } });
+        const msg = `⚠️ **${capability}** was NOT run — no execution runtime is ${sel.availability === "DEGRADED" ? "fully ready" : "available"}.\n\n${sel.reason}\n\nStart the job-queue worker (e.g. the Replit worker) so it sends a heartbeat, then try again. Nothing was executed.`;
+        say(msg);
+        await persistMessage(convId, assistantId, "assistant", msg);
+        return;
+      }
+      const rt = sel.runtime as ExecutionRuntimeAdapter;
+      let projectId: string | null = projectParam;
+      if (!projectId) {
+        try { projectId = sessionStorage.getItem(CURRENT_PROJECT_KEY); } catch { projectId = null; }
+      }
+      if (capability !== "command_execute" && !projectId) {
+        const msg = `⚠️ **${capability}** needs a selected project. Pick one on the Projects screen (or open chat with ?project=<id>). Nothing was executed.`;
+        emitTivoEvent("task.failed", { conversationId: convId, capability, runtime: rt.id, message: "no project selected" });
+        say(msg);
+        await persistMessage(convId, assistantId, "assistant", msg);
+        return;
+      }
+      setRuntimeStatus(`Execution • ${rt.label}`);
+      emitTivoEvent("task.started", { conversationId: convId, capability, runtime: rt.id, projectId: projectId ?? undefined });
+      emitTivoEvent(`${base}.started` as any, { conversationId: convId, capability, runtime: rt.id, projectId: projectId ?? undefined });
+      setStatusText("⏳ Job queued — waiting for the worker's real result...");
+      const t = /\bapk\b|android/i.test(command ?? "") || capability === "apk_build" ? "android" : capability === "exe_build" ? "windows" : undefined;
+      const res =
+        capability === "command_execute"
+          ? await rt.execute!({ command: command || "", signal: ctrl.signal })
+          : capability === "test"
+            ? await rt.test!({ projectId: projectId!, signal: ctrl.signal })
+            : capability === "deploy"
+              ? await rt.deploy!({ projectId: projectId!, signal: ctrl.signal })
+              : await rt.build!({ projectId: projectId!, target: t, signal: ctrl.signal });
+      const meta = { jobId: res.runId ?? null, exitCode: res.exitCode ?? null };
+      let msg: string;
+      if (res.ok) {
+        emitTivoEvent(`${base}.completed` as any, { conversationId: convId, capability, runtime: rt.id, meta });
+        emitTivoEvent("task.completed", { conversationId: convId, capability, runtime: rt.id, meta });
+        const out = (res.output || "").slice(-4000);
+        msg = `✅ **${capability}** finished (job \`${res.runId}\`, status done${res.exitCode != null ? `, exit ${res.exitCode}` : ""}).${out ? `\n\n\`\`\`\n${out}\n\`\`\`` : ""}`;
+      } else {
+        emitTivoEvent("task.failed", { conversationId: convId, capability, runtime: rt.id, message: res.error, meta });
+        msg = `❌ **${capability}** did not complete (job \`${res.runId ?? "n/a"}\`): ${res.error || "unknown error"}`;
+      }
+      say(msg);
+      await persistMessage(convId, assistantId, "assistant", msg);
+    } catch (e: any) {
+      emitTivoEvent("task.failed", { conversationId: convId, capability, message: String(e?.message || e) });
+      say(`❌ **${capability}** failed to start: ${e?.message || e}`);
+    } finally {
+      setStreaming(false);
+      setStatusText(null);
+      abortRef.current = null;
+    }
+  }
 
   function pushSystem(content: string, artifacts?: Artifact[]) {
     setMessages((m) => [...m, { id: uid(), role: "system", content, artifacts, ts: Date.now() }]);
