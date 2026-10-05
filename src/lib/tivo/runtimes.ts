@@ -11,6 +11,7 @@
 import { capabilityClass, type Availability, type Capability, type CapabilityClass } from "./capabilities";
 import { emitTivoEvent } from "./events";
 import { detectDevice, type DeviceProfile } from "./device";
+import { ReplitExecutionAdapter, ResearchFetchAdapter } from "./adapters";
 
 export type RuntimeKind = "local_server" | "cloud" | "builder" | "native" | "execution" | "research";
 
@@ -621,5 +622,8 @@ export function createRuntimeRegistry(opts: {
   return new RuntimeRegistry()
     .register(new LocalServerAdapter())
     .register(new BuilderAdapter(opts.builderEndpoint ?? null))
+    // Real "Hands": job_queue worker. Health comes from runtime/status heartbeats only.
+    .register(new ReplitExecutionAdapter({ backend: opts.backend, masterSecret: opts.masterSecret }))
+    .register(new ResearchFetchAdapter({ backend: opts.backend, masterSecret: opts.masterSecret }))
     .register(new CloudAdapter(opts.backend, opts.masterSecret));
 }
