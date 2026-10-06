@@ -10,6 +10,7 @@ import { SuggestionChips } from "@/components/chat/SuggestionChips";
 import { supabase } from "@/integrations/supabase/client";
 import { logAudit } from "@/lib/audit";
 import { createRuntimeRegistry } from "@/lib/tivo/runtimes";
+import { loadRuntimeConnections } from "@/lib/tivo/runtimeConnections";
 import { route } from "@/lib/tivo/router";
 import { emitTivoEvent } from "@/lib/tivo/events";
 import { capabilityClass, type Capability } from "@/lib/tivo/capabilities";
@@ -257,6 +258,15 @@ export default function ChatScreen() {
       }),
     [session?.masterSecret],
   );
+  // Dynamic runtime connections (backend descriptors, secret-free, health-gated).
+  useEffect(() => {
+    let off = false;
+    loadRuntimeConnections({ backend: BACKEND, masterSecret: session?.masterSecret || "" }).then(
+      (list) => !off && registry.registerDynamic(list),
+    );
+    return () => { off = true; };
+  }, [registry, session?.masterSecret]);
+
 
   const scrollRef = useRef<HTMLDivElement>(null);
   const abortRef = useRef<AbortController | null>(null);
