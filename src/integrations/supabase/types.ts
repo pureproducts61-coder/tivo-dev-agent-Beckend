@@ -787,6 +787,48 @@ export type Database = {
         }
         Relationships: []
       }
+      runtime_connections: {
+        Row: {
+          auth_type: string
+          capabilities: string[]
+          created_at: string
+          credential_key: string | null
+          enabled: boolean
+          endpoint: string
+          id: string
+          metadata: Json
+          name: string
+          tenant_id: string
+          updated_at: string
+        }
+        Insert: {
+          auth_type?: string
+          capabilities?: string[]
+          created_at?: string
+          credential_key?: string | null
+          enabled?: boolean
+          endpoint: string
+          id?: string
+          metadata?: Json
+          name: string
+          tenant_id: string
+          updated_at?: string
+        }
+        Update: {
+          auth_type?: string
+          capabilities?: string[]
+          created_at?: string
+          credential_key?: string | null
+          enabled?: boolean
+          endpoint?: string
+          id?: string
+          metadata?: Json
+          name?: string
+          tenant_id?: string
+          updated_at?: string
+        }
+        Relationships: []
+      }
       security_events: {
         Row: {
           blocked: boolean
