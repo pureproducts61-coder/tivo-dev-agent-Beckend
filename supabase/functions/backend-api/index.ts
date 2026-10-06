@@ -1151,6 +1151,125 @@ serve(async (req) => {
     // === CLOUD WEB RESEARCH (SSRF-safe public page fetch) ===
     // Not a search API, no browser runtime. Returns title/text/url for citation.
     // ============================================================
+    // ============================================================
+    // === DYNAMIC RUNTIME CONNECTIONS (provider-agnostic) ===
+    // Credential != Runtime != Capability. A row only references a
+    // system_credentials key; the secret never leaves the backend.
+    // Probing is limited to the documented TIVO contract: /health, /capabilities.
+    // ============================================================
+    if (action.startsWith("runtimes/")) {
+      if (!isSA) return jsonResponse({ error: "Super Admin only" }, 403);
+      if (!supabase) return jsonResponse({ error: "DB unavailable" }, 503);
+      const AUTH_TYPES = ["none", "token", "api_key"];
+      const COLS = "id,name,endpoint,auth_type,credential_key,enabled,capabilities,metadata,updated_at";
+      const descriptor = (r: any) => ({
+        id: r.id, name: r.name, endpoint: r.endpoint, auth_type: r.auth_type,
+        has_credential: !!r.credential_key, enabled: r.enabled,
+        capabilities: r.capabilities || [], runtime_class: r.metadata?.runtime_class || "execution",
+        priority: Number(r.metadata?.priority) || 50, local: r.metadata?.local === true,
+        execution_contract: r.metadata?.execution_contract === "tivo/v1", updated_at: r.updated_at,
+      });
+      const unsafeHost = (h: string) => {
+        h = h.toLowerCase().replace(/^\[|\]$/g, "");
+        return h === "localhost" || h.endsWith(".localhost") || h.endsWith(".local") || h.endsWith(".internal") ||
+          /^(0|10|127)\./.test(h) || /^169\.254\./.test(h) || /^192\.168\./.test(h) ||
+          /^172\.(1[6-9]|2\d|3[01])\./.test(h) || /^100\.(6[4-9]|[7-9]\d|1[01]\d|12[0-7])\./.test(h) ||
+          /^(::1?|fc|fd|fe80)/.test(h) || !h.includes(".");
+      };
+
+      if (action === "runtimes/list" && req.method === "GET") {
+        const { data, error } = await tFilter(supabase.from("runtime_connections").select(COLS)).order("name");
+        if (error) return jsonResponse((console.error("[db_error]", error), { error: "Database operation failed" }), 500);
+        return jsonResponse({ ok: true, runtimes: (data || []).map(descriptor) });
+      }
+
+      if (action === "runtimes/save" && req.method === "POST") {
+        const name = String(body?.name || "").trim().slice(0, 80);
+        const endpoint = String(body?.endpoint || "").trim().replace(/\/+$/, "");
+        const auth_type = String(body?.auth_type || "none");
+        const credential_key = body?.credential_key ? String(body.credential_key).trim().slice(0, 120) : null;
+        if (!name) return jsonResponse({ error: "name required" }, 400);
+        let u: URL;
+        try { u = new URL(endpoint); } catch { return jsonResponse({ error: "Invalid endpoint" }, 400); }
+        if (!["https:", "http:"].includes(u.protocol)) return jsonResponse({ error: "endpoint must be http(s)" }, 400);
+        if (!AUTH_TYPES.includes(auth_type)) return jsonResponse({ error: "Unsupported auth_type" }, 400);
+        if (auth_type !== "none" && !credential_key) return jsonResponse({ error: "credential_key required for this auth_type" }, 400);
+        const capabilities = Array.isArray(body?.capabilities)
+          ? body.capabilities.map((c: unknown) => String(c).slice(0, 40)).slice(0, 40) : [];
+        const metadata = body?.metadata && typeof body.metadata === "object" ? body.metadata : {};
+        const row = { tenant_id: writeTenant, name, endpoint, auth_type, credential_key, capabilities, metadata, enabled: body?.enabled !== false };
+        const q = body?.id
+          ? tFilter(supabase.from("runtime_connections").update(row)).eq("id", String(body.id))
+          : supabase.from("runtime_connections").upsert(row, { onConflict: "tenant_id,name" });
+        const { data, error } = await q.select(COLS).maybeSingle();
+        if (error) return jsonResponse((console.error("[db_error]", error), { error: "Database operation failed" }), 500);
+        if (!data) return jsonResponse({ error: "Runtime not found" }, 404);
+        await audit("super_admin", "runtime.saved", data.id, { name, host: u.host, auth_type, capabilities });
+        return jsonResponse({ ok: true, runtime: descriptor(data) });
+      }
+
+      if (action === "runtimes/delete" && (req.method === "DELETE" || req.method === "POST")) {
+        const id = String(body?.id || url.searchParams.get("id") || "");
+        if (!id) return jsonResponse({ error: "id required" }, 400);
+        const { data, error } = await tFilter(supabase.from("runtime_connections").delete()).eq("id", id).select("id,name");
+        if (error) return jsonResponse((console.error("[db_error]", error), { error: "Database operation failed" }), 500);
+        if (!data?.length) return jsonResponse({ error: "Runtime not found" }, 404);
+        await audit("super_admin", "runtime.deleted", id, { name: data[0].name });
+        return jsonResponse({ ok: true });
+      }
+
+      if (action === "runtimes/test" && (req.method === "POST" || req.method === "GET")) {
+        const id = String(body?.id || url.searchParams.get("id") || "");
+        if (!id) return jsonResponse({ error: "id required" }, 400);
+        const { data: r } = await tFilter(supabase.from("runtime_connections").select("*")).eq("id", id).maybeSingle();
+        if (!r) return jsonResponse({ error: "Runtime not found" }, 404);
+        const checkedAt = new Date().toISOString();
+        const fail = async (reason: string) => {
+          await audit("super_admin", "runtime.tested", id, { name: r.name, online: false, reason });
+          return jsonResponse({ ok: true, id, online: false, reason, checked_at: checkedAt });
+        };
+        if (!r.enabled) return fail("connection is disabled");
+        let u: URL;
+        try { u = new URL(r.endpoint); } catch { return fail("invalid endpoint"); }
+        if (unsafeHost(u.hostname) && r.metadata?.local !== true) {
+          return fail("private/local address — mark metadata.local=true; local runtimes must be probed from the device");
+        }
+        if (r.metadata?.local === true && unsafeHost(u.hostname)) {
+          return fail("local runtime — the backend cannot reach it; probe it from the device");
+        }
+        const headers: Record<string, string> = { Accept: "application/json" };
+        if (r.auth_type !== "none") {
+          const { data: cred } = await supabase.from("system_credentials").select("value,is_active")
+            .eq("tenant_id", r.tenant_id).eq("key_name", r.credential_key).maybeSingle();
+          if (!cred?.value || cred.is_active === false) return fail("referenced credential is missing or inactive");
+          if (r.auth_type === "token") headers.Authorization = `Bearer ${cred.value}`;
+          else headers["x-api-key"] = cred.value;
+        }
+        const probe = async (path: string) => {
+          const ctrl = new AbortController();
+          const t = setTimeout(() => ctrl.abort(), 8000);
+          try {
+            const res = await fetch(`${r.endpoint}${path}`, { headers, redirect: "error", signal: ctrl.signal });
+            const j = await res.json().catch(() => null);
+            return { status: res.status, ok: res.ok, json: j };
+          } catch { return { status: 0, ok: false, json: null }; } finally { clearTimeout(t); }
+        };
+        const h = await probe("/health");
+        if (!h.ok) return fail(h.status ? `/health returned HTTP ${h.status}` : "/health unreachable or timed out");
+        const c = await probe("/capabilities");
+        const discovered: string[] = c.ok && Array.isArray(c.json?.capabilities)
+          ? c.json.capabilities.map((x: unknown) => String(x).slice(0, 40)).slice(0, 40) : [];
+        const contract = c.ok && c.json?.contract === "tivo/v1" ? "tivo/v1" : null;
+        await audit("super_admin", "runtime.tested", id, { name: r.name, online: true, discovered, contract });
+        return jsonResponse({
+          ok: true, id, online: true, checked_at: checkedAt,
+          version: typeof h.json?.version === "string" ? h.json.version.slice(0, 40) : null,
+          discovered_capabilities: discovered, execution_contract: contract,
+        });
+      }
+      return jsonResponse({ error: "Unknown runtimes action" }, 404);
+    }
+
     if (action === "research/fetch" && req.method === "POST") {
       if (!isSA) return jsonResponse({ error: "Super Admin only" }, 403);
       const target = String(body?.url || "");
