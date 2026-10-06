@@ -482,6 +482,17 @@ export class RuntimeRegistry {
     return this;
   }
 
+  /**
+   * Registers dynamically configured runtimes (backend descriptors). Existing
+   * built-ins stay; selection remains capability-first and health-gated.
+   * Dynamic runtimes may never claim the model class's Cloud fallback role.
+   */
+  registerDynamic(list: RuntimeAdapter[]) {
+    this.adapters = this.adapters.filter((x) => !x.id.startsWith("conn:"));
+    for (const a of list) if (a.id.startsWith("conn:")) this.register(a);
+    return this;
+  }
+
   all() {
     return [...this.adapters].sort((a, b) => a.priority - b.priority);
   }
