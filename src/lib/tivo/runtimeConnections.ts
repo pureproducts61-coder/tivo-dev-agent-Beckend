@@ -83,7 +83,7 @@ export class RuntimeConnectionAdapter implements RuntimeAdapter {
     this.id = `conn:${d.id}`;
     this.label = d.name;
     this.runtimeClass = d.runtime_class;
-    this.kind = (d.runtime_class === "model" ? "local" : d.runtime_class) as RuntimeKind;
+    this.kind = (d.runtime_class === "model" ? "local_server" : d.runtime_class) as RuntimeKind;
     this.capabilities = d.capabilities as Capability[];
     this.priority = d.priority;
   }
