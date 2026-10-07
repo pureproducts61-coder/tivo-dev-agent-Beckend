@@ -423,8 +423,7 @@ serve(async (req) => {
 
       const systemPrompt = `You are TIVO DEV AGENT — an elite full-stack developer AI.
 Generate production-ready, complete, well-structured code.
-${language ? `Language: ${language}` : ""}
-${framework ? `Framework: ${framework}` : ""}
+Honor the language/framework in the request parameters when provided.
 Rules:
 - Write COMPLETE, runnable code — no placeholders, no TODOs
 - Include proper error handling and edge cases
@@ -434,6 +433,7 @@ Rules:
 
       const messages = [
         { role: "system", content: systemPrompt },
+        paramsMessage({ language, framework }),
         ...(context ? [{ role: "user", content: `Context:\n${context}` }] : []),
         { role: "user", content: prompt },
       ];
@@ -467,7 +467,8 @@ Rules:
       const { code, error_message, language } = body;
       if (!code) return jsonResponse({ error: "code required" }, 400);
       const result = await callAI([
-        { role: "system", content: `You are TIVO DEV AGENT Bug Fixer.\n1. Identify root cause 2. Explain the bug 3. Provide COMPLETE fixed code 4. List all changes\n${language ? `Language: ${language}` : ""}\nCRITICAL: Output must be immediately runnable.` },
+        { role: "system", content: `You are TIVO DEV AGENT Bug Fixer.\n1. Identify root cause 2. Explain the bug 3. Provide COMPLETE fixed code 4. List all changes\nHonor the language in the request parameters.\nCRITICAL: Output must be immediately runnable.` },
+        paramsMessage({ language }),
         { role: "user", content: `Code:\n\`\`\`\n${code}\n\`\`\`\n${error_message ? `\nError: ${error_message}` : ""}` },
       ], false, "google/gemini-2.5-pro");
       return jsonResponse({ success: true, fix: result });
@@ -479,9 +480,7 @@ Rules:
       if (!description) return jsonResponse({ error: "description required" }, 400);
 
       const systemPrompt = `You are TIVO DEV AGENT Project Builder — generate complete, production-ready multi-file projects.
-${framework ? `Framework: ${framework}` : "Choose the best framework for the task."}
-${tech_stack ? `Tech Stack: ${tech_stack}` : ""}
-${features ? `Required features: ${features.join(", ")}` : ""}
+Use the framework, tech stack and features from the request parameters when provided; otherwise choose the best framework for the task.
 
 Return a JSON object:
 {
@@ -503,6 +502,7 @@ CRITICAL RULES:
 
       const result = await callAI([
         { role: "system", content: systemPrompt },
+        paramsMessage({ framework, tech_stack, features }),
         { role: "user", content: description },
       ], false, model || "google/gemini-2.5-pro");
 
@@ -555,7 +555,8 @@ CRITICAL RULES:
       const { code, from_language, to_language, from_framework, to_framework } = body;
       if (!code) return jsonResponse({ error: "code required" }, 400);
       const result = await callAI([
-        { role: "system", content: `TIVO DEV AGENT Code Converter.\nFrom: ${from_language || "auto-detect"} ${from_framework ? `(${from_framework})` : ""}\nTo: ${to_language || "JavaScript"} ${to_framework ? `(${to_framework})` : ""}\nReturn COMPLETE converted code.` },
+        { role: "system", content: `TIVO DEV AGENT Code Converter.\nConvert using the from/to language and framework in the request parameters (defaults: auto-detect source, JavaScript target).\nReturn COMPLETE converted code.` },
+        paramsMessage({ from_language, from_framework, to_language, to_framework }),
         { role: "user", content: code },
       ], false, "google/gemini-2.5-pro");
       return jsonResponse({ success: true, converted: result });
@@ -566,7 +567,8 @@ CRITICAL RULES:
       const { description, endpoints, database_schema, auth_type } = body;
       if (!description) return jsonResponse({ error: "description required" }, 400);
       const result = await callAI([
-        { role: "system", content: `TIVO DEV AGENT API Builder. Generate complete REST API.\n${endpoints ? `Endpoints: ${JSON.stringify(endpoints)}` : ""}\n${database_schema ? `Schema: ${JSON.stringify(database_schema)}` : ""}\n${auth_type ? `Auth: ${auth_type}` : ""}\nReturn complete, production-ready API code with routes, controllers, middleware, validation.` },
+        { role: "system", content: `TIVO DEV AGENT API Builder. Generate complete REST API using the endpoints, schema and auth type in the request parameters when provided.\nReturn complete, production-ready API code with routes, controllers, middleware, validation.` },
+        paramsMessage({ endpoints, database_schema, auth_type }),
         { role: "user", content: description },
       ], false, "google/gemini-2.5-pro");
       return jsonResponse({ success: true, api: result });
@@ -618,7 +620,7 @@ CRITICAL RULES:
             role: "system",
             content: `You are TIVO DEV AGENT Factory. Generate a COMPLETE, PROFESSIONAL project.
 Return JSON: {"project_name":"string","files":[{"path":"string","content":"string"}],"dependencies":[],"setup_commands":["npm install","npm run dev"]}
-Framework: ${framework || "react with vite and tailwind"}. ${features ? `Features: ${features.join(", ")}` : ""}
+Use the framework and features from the request parameters (default framework: react with vite and tailwind).
 
 CRITICAL:
 - Generate 15-40 files for any real application
@@ -826,7 +828,7 @@ Fix ALL remaining issues. Return JSON: {"score":0-100,"fixed_files":[{"path":"st
         {
           role: "system",
           content: `Generate a COMPLETE project. Return JSON: {"project_name":"string","files":[{"path":"string","content":"string"}],"dependencies":[],"setup_commands":["npm install","npm run dev"]}
-Framework: ${framework || "react with vite and tailwind"}. ${features ? `Features: ${features.join(", ")}` : ""}
+Use the framework and features from the request parameters (default framework: react with vite and tailwind).
 Generate 15-40 files. Complete code, no TODOs. TypeScript strict.`,
         },
         { role: "user", content: description },
