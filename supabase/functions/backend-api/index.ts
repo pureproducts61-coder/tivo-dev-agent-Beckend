@@ -530,7 +530,21 @@ serve(async (req) => {
         const supaAnon = Deno.env.get("SUPABASE_ANON_KEY") || Deno.env.get("SUPABASE_PUBLISHABLE_KEY");
         if (!supaUrl || !supaAnon) return jsonResponse({ ok: false, error: "Auth not configured" }, 503);
         const c = createClient(supaUrl, supaAnon);
-        const redirectTo = (b.redirect_to as string) || `${supaUrl}`;
+        // Only allow redirects back to this app's own origins.
+        const ALLOWED_REDIRECT_ORIGINS = new Set([
+          "https://tivo-agent.lovable.app",
+          "https://id-preview--815047d2-18b4-41f5-9ab3-e2957e329b06.lovable.app",
+          "http://localhost:8080",
+          ...(Deno.env.get("APP_ALLOWED_ORIGINS") || "").split(",").map((x) => x.trim()).filter(Boolean),
+        ]);
+        let redirectTo = "https://tivo-agent.lovable.app/";
+        if (typeof b.redirect_to === "string" && b.redirect_to) {
+          try {
+            const u = new URL(b.redirect_to);
+            if (!ALLOWED_REDIRECT_ORIGINS.has(u.origin)) return jsonResponse({ ok: false, error: "redirect_to not allowed" }, 400);
+            redirectTo = u.toString();
+          } catch { return jsonResponse({ ok: false, error: "Invalid redirect_to" }, 400); }
+        }
         const { error } = await c.auth.signInWithOtp({ email, options: { emailRedirectTo: redirectTo } });
         if (error) { console.error("[auth_otp]", error); return jsonResponse({ ok: false, error: "Could not send magic link" }, 400); }
         return jsonResponse({ ok: true, sent: true, message: "Magic link পাঠানো হয়েছে — ইমেইল চেক করুন" });
