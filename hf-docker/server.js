@@ -98,11 +98,21 @@ async function buildApk(buildId, files, config, tenant) {
     const appName = sanitizeAppName(config.app_name);
     const packageName = sanitizePackageName(config.package_name);
 
-    // Build web first — ignore user-supplied lifecycle scripts to prevent RCE via package.json
-    if (fs.existsSync(path.join(buildDir, "package.json"))) {
-      execFileSync("npm", ["install", "--ignore-scripts"], { cwd: buildDir, timeout: 120000, stdio: "pipe" });
-      execFileSync("npm", ["run", "build", "--if-present", "--ignore-scripts"], { cwd: buildDir, timeout: 120000, stdio: "pipe" });
+    // Never execute submitted code (package.json scripts, bundler configs) on this host.
+    // The caller must submit prebuilt static web assets: either dist/index.html or a root index.html.
+    const distDir = path.join(buildDir, "dist");
+    if (!fs.existsSync(path.join(distDir, "index.html"))) {
+      if (!fs.existsSync(path.join(buildDir, "index.html"))) {
+        throw new Error("Prebuilt web assets required (dist/index.html or index.html)");
+      }
+      fs.mkdirSync(distDir, { recursive: true });
+      for (const entry of fs.readdirSync(buildDir)) {
+        if (["dist", "node_modules", "package.json", "package-lock.json"].includes(entry)) continue;
+        fs.cpSync(path.join(buildDir, entry), path.join(distDir, entry), { recursive: true, dereference: false });
+      }
     }
+    // Capacitor CLI reads package.json; replace any submitted one with a trusted, script-free manifest.
+    fs.writeFileSync(path.join(buildDir, "package.json"), JSON.stringify({ name: "tivo-apk-build", private: true, version: "1.0.0" }));
 
     // Init Capacitor — pass sanitized values as argv, never shell-interpolated
     execFileSync("npx", ["@capacitor/cli", "init", appName, packageName, "--web-dir", "dist"], {

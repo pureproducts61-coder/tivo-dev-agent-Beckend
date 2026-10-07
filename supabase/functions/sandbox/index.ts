@@ -145,7 +145,13 @@ serve(async (req) => {
     // Supabase is optional — only needed for project_id lookups
     const supabase = tryGetSupabase();
     const isSA = tenantId === "super_admin";
-    const tFilter = (q: any) => isSA ? q : q.eq("tenant_id", tenantId);
+    // Non-admins are scoped to their tenant AND, when a user session is present, to projects they own.
+    const tFilter = (q: any) => {
+      if (isSA) return q;
+      let out = q.eq("tenant_id", tenantId);
+      if (verifiedUser) out = out.eq("user_id", verifiedUser.id);
+      return out;
+    };
 
     // Resource ownership must derive from the verified session, never from request body.
     const resolveOwnerUserId = (claimed: unknown): string | null => {
