@@ -7,6 +7,44 @@ const corsHeaders = {
   "Access-Control-Allow-Methods": "GET, POST, PUT, DELETE, OPTIONS",
 };
 
+// ---- File input validation (path confinement, size and type limits) ----
+const MAX_FILE_BYTES = 1_000_000;
+const MAX_TOTAL_BYTES = 20_000_000;
+const MAX_FILES = 500;
+const FILE_CONTENT_TYPES: Record<string, string> = {
+  html: "text/html", htm: "text/html", css: "text/css", js: "text/javascript", mjs: "text/javascript",
+  jsx: "text/plain", ts: "text/plain", tsx: "text/plain", json: "application/json", md: "text/markdown",
+  txt: "text/plain", svg: "image/svg+xml", xml: "application/xml", yml: "text/plain", yaml: "text/plain",
+  toml: "text/plain", sql: "text/plain", py: "text/plain", sh: "text/plain", env: "text/plain",
+  gitignore: "text/plain", lock: "text/plain", vue: "text/plain", svelte: "text/plain", java: "text/plain",
+  kt: "text/plain", gradle: "text/plain", properties: "text/plain", csv: "text/csv",
+};
+function validateFiles(files: unknown): { ok: true; files: { path: string; content: string; contentType: string }[] } | { ok: false; error: string } {
+  if (!Array.isArray(files)) return { ok: false, error: "files must be an array" };
+  if (files.length > MAX_FILES) return { ok: false, error: `Too many files (max ${MAX_FILES})` };
+  const out: { path: string; content: string; contentType: string }[] = [];
+  let total = 0;
+  for (const f of files as any[]) {
+    const path = typeof f?.path === "string" ? f.path.trim() : "";
+    if (!path || path.length > 300 || path.startsWith("/") || path.includes("\\") || path.includes("\0") ||
+        path.split("/").some((seg: string) => seg === "" || seg === "." || seg === "..") ||
+        !/^[A-Za-z0-9._\-\/@ ]+$/.test(path)) {
+      return { ok: false, error: `Invalid file path: ${String(f?.path ?? "").slice(0, 100)}` };
+    }
+    if (typeof f?.content !== "string") return { ok: false, error: `File content must be text: ${path}` };
+    const size = new TextEncoder().encode(f.content).length;
+    if (size > MAX_FILE_BYTES) return { ok: false, error: `File too large (max 1 MB): ${path}` };
+    total += size;
+    if (total > MAX_TOTAL_BYTES) return { ok: false, error: "Total file size too large (max 20 MB)" };
+    const base = path.split("/").pop() || "";
+    const ext = (base.includes(".") ? base.split(".").pop() : base.replace(/^\./, ""))!.toLowerCase();
+    const contentType = FILE_CONTENT_TYPES[ext];
+    if (!contentType) return { ok: false, error: `File type not allowed: ${path}` };
+    out.push({ path, content: f.content, contentType });
+  }
+  return { ok: true, files: out };
+}
+
 function jsonResponse(data: any, status = 200) {
   return new Response(JSON.stringify(data), {
     status,
@@ -216,6 +254,9 @@ serve(async (req) => {
           ? (typeof user_id === "string" && user_id ? user_id : "system")
           : null;
       if (!ownerUserId) return jsonResponse({ error: "Unauthorized — verified user session required to create a project" }, 401);
+      const vf = validateFiles(files || []);
+      if (!vf.ok) return jsonResponse({ error: vf.error }, 400);
+      const cleanFiles = vf.files.map(({ path, content }) => ({ path, content }));
 
       const { data, error } = await supabase.from("projects").insert({
         user_id: ownerUserId,
@@ -223,7 +264,7 @@ serve(async (req) => {
         name: cleanName,
         description: (description || "").toString().slice(0, 2000),
         repo_url: repo_url || "",
-        files: files || [],
+        files: cleanFiles,
         status: "active",
         build_status: "pending",
         version_history: [{ version: 1, timestamp: new Date().toISOString(), note: "Initial creation" }],
@@ -232,17 +273,12 @@ serve(async (req) => {
       if (error) return jsonResponse((console.error("[db_error]", error), { error: "Database operation failed" }), 500);
 
       // Upload initial files
-      if (files?.length && data?.id) {
-        const contentTypes: Record<string, string> = {
-          html: "text/html", css: "text/css", js: "application/javascript",
-          json: "application/json", ts: "application/javascript", tsx: "application/javascript",
-        };
-        for (const file of files) {
-          const ext = file.path.split(".").pop() || "txt";
+      if (vf.files.length && data?.id) {
+        for (const file of vf.files) {
           await supabase.storage.from("project-files").upload(
             `${data.id}/${file.path}`,
             new TextEncoder().encode(file.content),
-            { contentType: contentTypes[ext] || "text/plain", upsert: true }
+            { contentType: file.contentType, upsert: true }
           );
         }
       }
@@ -255,15 +291,45 @@ serve(async (req) => {
 
     // === UPDATE PROJECT ===
     if (action === "update" && req.method === "PUT") {
-      const { id, ...updates } = body;
+      const { id } = body;
       if (!id) return jsonResponse({ error: "id required" }, 400);
+      // Only an explicit allowlist of fields may be changed by callers.
+      const updates: Record<string, any> = {};
+      if (body.name !== undefined) {
+        const n = sanitizeProjectName(String(body.name || ""));
+        if (!n) return jsonResponse({ error: "valid name required" }, 400);
+        updates.name = n;
+      }
+      if (body.description !== undefined) updates.description = String(body.description ?? "").slice(0, 2000);
+      if (body.repo_url !== undefined) {
+        const r = String(body.repo_url ?? "");
+        if (r && !/^https:\/\/[^\s]{1,500}$/.test(r)) return jsonResponse({ error: "repo_url must be https" }, 400);
+        updates.repo_url = r;
+      }
+      if (body.build_status !== undefined) {
+        const allowed = ["pending", "queued", "building", "success", "failed", "audited", "tested_clean", "tested_fixed"];
+        if (!allowed.includes(String(body.build_status))) return jsonResponse({ error: "invalid build_status" }, 400);
+        updates.build_status = String(body.build_status);
+      }
+      if (body.status !== undefined) {
+        if (!["active", "archived"].includes(String(body.status))) return jsonResponse({ error: "invalid status" }, 400);
+        updates.status = String(body.status);
+      }
+      let validatedFiles: { path: string; content: string; contentType: string }[] | null = null;
+      if (body.files !== undefined) {
+        const vf = validateFiles(body.files);
+        if (!vf.ok) return jsonResponse({ error: vf.error }, 400);
+        validatedFiles = vf.files;
+        updates.files = vf.files.map(({ path, content }) => ({ path, content }));
+      }
+      if (!Object.keys(updates).length) return jsonResponse({ error: "no updatable fields supplied" }, 400);
 
       // Verify ownership BEFORE any storage write (prevents cross-tenant overwrite/defacement)
       const { data: owned } = await scope(supabase.from("projects").select("id, version_history, files").eq("id", id)).maybeSingle();
       if (!owned) return jsonResponse({ error: "Project not found" }, 404);
 
       // Save version before update if files changed
-      if (updates.files) {
+      if (validatedFiles) {
         const history = (owned.version_history as any[]) || [];
         history.push({
           version: history.length + 1,
@@ -274,16 +340,11 @@ serve(async (req) => {
         updates.version_history = history.slice(-50);
 
         // Re-upload files to storage
-        const contentTypes: Record<string, string> = {
-          html: "text/html", css: "text/css", js: "application/javascript",
-          json: "application/json", ts: "application/javascript", tsx: "application/javascript",
-        };
-        for (const file of updates.files) {
-          const ext = file.path.split(".").pop() || "txt";
+        for (const file of validatedFiles) {
           await supabase.storage.from("project-files").upload(
             `${id}/${file.path}`,
             new TextEncoder().encode(file.content),
-            { contentType: contentTypes[ext] || "text/plain", upsert: true }
+            { contentType: file.contentType, upsert: true }
           );
         }
       }
@@ -332,12 +393,14 @@ serve(async (req) => {
       if (!owned) return jsonResponse({ error: "Project not found or access denied" }, 404);
 
 
+      const vf = validateFiles(files);
+      if (!vf.ok) return jsonResponse({ error: vf.error }, 400);
       const results = [];
-      for (const file of files) {
+      for (const file of vf.files) {
         const storagePath = `${project_id}/${file.path}`;
         const content = new TextEncoder().encode(file.content);
         const { error } = await supabase.storage.from("project-files").upload(storagePath, content, {
-          contentType: file.content_type || "text/plain",
+          contentType: file.contentType,
           upsert: true,
         });
         const { data: signed } = error ? { data: null } : await supabase.storage.from("project-files").createSignedUrl(storagePath, 60 * 60 * 24 * 365);

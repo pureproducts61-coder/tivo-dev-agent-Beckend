@@ -1290,6 +1290,27 @@ serve(async (req) => {
         /^(::1?|fc|fd|fe80)/.test(host) ||
         !host.includes(".");
       if (blockedHost) return jsonResponse({ error: "Blocked host — private, internal and metadata addresses are not allowed" }, 400);
+      if ((parsed.port && parsed.port !== "443") || parsed.username || parsed.password) {
+        return jsonResponse({ error: "Only the default https port without credentials is allowed" }, 400);
+      }
+      // Resolve DNS and reject any name that points at a private/internal address.
+      const privIp = (ip: string) => {
+        ip = ip.toLowerCase();
+        return /^(0|10|127)\./.test(ip) || /^169\.254\./.test(ip) || /^192\.168\./.test(ip) ||
+          /^172\.(1[6-9]|2\d|3[01])\./.test(ip) || /^100\.(6[4-9]|[7-9]\d|1[01]\d|12[0-7])\./.test(ip) ||
+          /^(22[4-9]|2[3-5]\d)\./.test(ip) || ip === "::" || ip === "::1" || /^(fc|fd|fe8|fe9|fea|feb)/.test(ip) ||
+          /^::ffff:/.test(ip);
+      };
+      try {
+        const ips: string[] = [];
+        for (const rt of ["A", "AAAA"] as const) {
+          try { ips.push(...(await Deno.resolveDns(host, rt))); } catch { /* no record of this type */ }
+        }
+        if (!ips.length) return jsonResponse({ error: "Host could not be resolved" }, 400);
+        if (ips.some(privIp)) return jsonResponse({ error: "Blocked host — resolves to a private or internal address" }, 400);
+      } catch {
+        return jsonResponse({ error: "Host could not be resolved" }, 400);
+      }
 
       const ctrl = new AbortController();
       const timer = setTimeout(() => ctrl.abort(), 12000);
