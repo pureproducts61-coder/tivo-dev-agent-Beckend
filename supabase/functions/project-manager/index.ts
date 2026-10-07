@@ -307,12 +307,12 @@ serve(async (req) => {
         updates.repo_url = r;
       }
       if (body.build_status !== undefined) {
-        const allowed = ["pending", "queued", "building", "success", "failed", "audited", "tested_clean", "tested_fixed"];
+        const allowed = ["pending", "queued", "building", "success", "failed", "audited", "tested_clean", "tested_fixed", "files_uploaded", "idle", "live", "paused", "stopped", "published"];
         if (!allowed.includes(String(body.build_status))) return jsonResponse({ error: "invalid build_status" }, 400);
         updates.build_status = String(body.build_status);
       }
       if (body.status !== undefined) {
-        if (!["active", "archived"].includes(String(body.status))) return jsonResponse({ error: "invalid status" }, 400);
+        if (!["active", "archived", "live", "paused", "stopped", "idle"].includes(String(body.status))) return jsonResponse({ error: "invalid status" }, 400);
         updates.status = String(body.status);
       }
       let validatedFiles: { path: string; content: string; contentType: string }[] | null = null;
