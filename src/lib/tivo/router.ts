@@ -43,6 +43,8 @@ export async function route(
   };
 }
 
+export { dissectGoal, type GoalDissection, type BrainIntent, type WorldSnapshot } from "./cognition";
+
 /** Report a genuinely unavailable capability — never fabricate a result. */
 export function reportUnavailable(d: RouteDecision) {
   emitTivoEvent("runtime.unavailable", {
