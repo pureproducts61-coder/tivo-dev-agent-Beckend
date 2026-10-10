@@ -1,4 +1,6 @@
 import { useState, useMemo } from "react";
+import type { GoalDissection } from "@/lib/tivo/cognition";
+import { CognitionTrace, shouldSurface } from "./CognitionTrace";
 import ReactMarkdown from "react-markdown";
 import remarkGfm from "remark-gfm";
 import {
@@ -26,6 +28,8 @@ export interface ChatMsg {
   durationMs?: number;
   creditsUsed?: number;
   feedback?: "up" | "down" | null;
+  /** How the Brain dissected the goal (live, not persisted). */
+  cognition?: GoalDissection;
 }
 
 const COLLAPSE_LIMIT = 380;
@@ -208,6 +212,7 @@ export function ChatMessage({
         <span className="w-1.5 h-1.5 rounded-full bg-amber-400 animate-pulse" />
         <span>TIVO Agent</span>
       </div>
+      {msg.cognition && shouldSurface(msg.cognition) && <CognitionTrace d={msg.cognition} />}
       <div className="text-sm leading-relaxed text-zinc-100">
         {msg.content ? (
           <div className="prose prose-invert prose-sm max-w-none prose-code:text-amber-300 prose-headings:text-zinc-100 prose-a:text-amber-400 prose-p:my-2">
