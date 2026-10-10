@@ -411,9 +411,7 @@ Include RLS policies, indexes, foreign keys, seed data.`,
 
       const schema = parseJsonFromAI(result);
       if (schema && body.project_id && supabase) {
-        let uq = supabase.from("projects").update({ build_metadata: { database_schema: schema } }).eq("id", body.project_id);
-        if (tenantId !== "super_admin") uq = uq.eq("tenant_id", tenantId);
-        await uq.catch(() => {});
+        await tFilter(supabase.from("projects").update({ build_metadata: { database_schema: schema } }).eq("id", body.project_id)).catch(() => {});
       }
       if (supabase) {
         await supabase.from("memory_logs").insert({ action: "schema_generated", details: { description, tables_count: schema?.tables?.length || 0 } }).catch(() => {});
