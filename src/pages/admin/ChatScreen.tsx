@@ -11,7 +11,7 @@ import { supabase } from "@/integrations/supabase/client";
 import { logAudit } from "@/lib/audit";
 import { createRuntimeRegistry } from "@/lib/tivo/runtimes";
 import { loadRuntimeConnections } from "@/lib/tivo/runtimeConnections";
-import { route } from "@/lib/tivo/router";
+import { route, dissectGoal } from "@/lib/tivo/router";
 import { emitTivoEvent } from "@/lib/tivo/events";
 import { capabilityClass, type Capability } from "@/lib/tivo/capabilities";
 import type { ExecutionRuntimeAdapter } from "@/lib/tivo/runtimes";
@@ -510,6 +510,18 @@ export default function ChatScreen() {
 
     // ── ONE Brain → capability router → a runtime that is really reachable ──
     const decision = await route(registry, text);
+    // ── Cognition: goal → resources → gaps → composition (truthful, no execution) ──
+    try {
+      const { data: u } = await supabase.auth.getUser();
+      let pid: string | null = null;
+      try { pid = sessionStorage.getItem(CURRENT_PROJECT_KEY); } catch { /* none */ }
+      const resources = pid ? [{ kind: "project" as const, id: pid }] : [];
+      const probe = dissectGoal(text, { userId: u.user?.id ?? null, resources, availableCapabilities: [] });
+      const caps = Array.from(new Set<Capability>(["chat", ...probe.requiredCapabilities]));
+      const availableCapabilities = caps.filter((c) => registry.eligible(c).length > 0);
+      const cognition = dissectGoal(text, { userId: u.user?.id ?? null, resources, availableCapabilities });
+      setMessages((m) => m.map((x) => (x.id === assistantId ? { ...x, cognition } : x)));
+    } catch { /* cognition is advisory; never block the reply */ }
     // ── Execution path: real work goes to the registered execution runtime ──
     // Cheap gate on top of the classifier: only explicit imperative requests
     // ("build …", "run tests", "deploy", "/run <cmd>") are treated as execution.
