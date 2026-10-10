@@ -587,7 +587,8 @@ CRITICAL RULES:
       const { code, doc_type } = body;
       if (!code) return jsonResponse({ error: "code required" }, 400);
       const result = await callAI([
-        { role: "system", content: `TIVO DEV AGENT Documentation Generator. ${doc_type ? `Type: ${doc_type}` : "Full Markdown documentation."}\nGenerate comprehensive, well-structured documentation.` },
+        { role: "system", content: `TIVO DEV AGENT Documentation Generator. Generate comprehensive, well-structured Markdown documentation.` },
+        paramsMessage({ doc_type }),
         { role: "user", content: code },
       ], false, "google/gemini-2.5-flash");
       return jsonResponse({ success: true, documentation: result });
