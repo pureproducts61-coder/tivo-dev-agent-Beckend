@@ -9,6 +9,7 @@
  *  - No runtime ⇒ honest "unavailable", never a fabricated result.
  */
 import { emitTivoEvent } from "./events";
+import { observe, recordEvidence, type EvidenceRecord } from "./evidence";
 import { findAffordance, type InteractionRequest } from "./world";
 import type { RuntimeAdapter } from "./runtimes";
 
@@ -23,6 +24,8 @@ export interface TdefResult {
   error?: string;
   startedAt: string;
   finishedAt: string;
+  /** Real observed facts (Step 3). Present only when a runtime actually ran. */
+  evidence?: EvidenceRecord;
 }
 
 export interface RuntimeSelector {
@@ -92,6 +95,13 @@ export async function executeInteraction(
   } catch (e: any) {
     result = done({ status: "failed", runtime: runtime.id, error: String(e?.message || e) });
   }
+  // OBSERVE: attach real evidence. A "succeeded" operation is not a verified goal.
+  const evidence = observe({
+    correlationId: req.correlationId, affordanceId: aff.id, primitive: aff.primitive,
+    runtime: runtime.id, output: result.output, error: result.error,
+  });
+  recordEvidence(evidence);
+  result.evidence = evidence;
   emitTivoEvent(result.status === "succeeded" ? "task.completed" : "task.failed", {
     taskId: req.correlationId, runtime: runtime.id, capability: aff.capability, message: result.error || aff.id,
   });
