@@ -63,7 +63,7 @@ async function dispatch(rt: any, affordanceId: string, req: InteractionRequest):
 export async function executeInteraction(
   req: InteractionRequest,
   registry: RuntimeSelector,
-  opts: { approved?: boolean } = {},
+  opts: { approved?: boolean; grant?: PlanGrant } = {},
 ): Promise<TdefResult> {
   const startedAt = new Date().toISOString();
   const base = { correlationId: req.correlationId, idempotencyKey: req.idempotencyKey, startedAt };
@@ -72,13 +72,14 @@ export async function executeInteraction(
   const prior = completed.get(req.idempotencyKey);
   if (prior && prior.status === "succeeded") return prior;
 
+  const aff = findAffordance(req.affordanceId);
   if (req.control.decision === "DENY") return done({ status: "denied", error: req.control.reasons.join(", ") });
-  if (req.control.decision === "REQUIRE_APPROVAL" && !opts.approved) {
+  const covered = !!aff && grantCovers(opts.grant, aff, req);
+  if (req.control.decision === "REQUIRE_APPROVAL" && !opts.approved && !covered) {
     emitTivoEvent("task.waiting_permission", { taskId: req.correlationId, message: req.affordanceId });
     return done({ status: "needs_approval", error: req.control.reasons.join(", ") });
   }
 
-  const aff = findAffordance(req.affordanceId);
   if (!aff) return done({ status: "denied", error: "unknown_affordance" });
 
   const { runtime, reason } = await registry.select(aff.capability);
