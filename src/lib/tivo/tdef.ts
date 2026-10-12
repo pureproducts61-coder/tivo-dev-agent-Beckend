@@ -12,6 +12,7 @@ import { emitTivoEvent } from "./events";
 import { observe, recordEvidence, type EvidenceRecord } from "./evidence";
 import { findAffordance, type InteractionRequest } from "./world";
 import type { RuntimeAdapter } from "./runtimes";
+import { grantCovers, type PlanGrant } from "./approval";
 
 export type TdefStatus = "succeeded" | "failed" | "denied" | "needs_approval" | "unavailable";
 
