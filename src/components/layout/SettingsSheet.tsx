@@ -216,9 +216,7 @@ export function SettingsSheet({
           {tab === "ai" && (
             <>
               <Card title="Models">
-                <p className="text-[11px] text-zinc-500">
-                  Model Manager (register / activate / delete) backend প্রস্তুত; UI এখানে আসবে।
-                </p>
+                <ModelVault />
               </Card>
               <Card title="Providers">
                 <p className="text-[11px] text-zinc-500">
@@ -245,6 +243,10 @@ export function SettingsSheet({
           )}
 
           {tab === "runtime" && (
+            <>
+            <Card title="Connections — models, hosting, execution">
+              <RuntimeVault />
+            </Card>
             <Card title="Runtime Mode">
               <div className="grid grid-cols-4 gap-2">
                 {(["cloud", "hybrid", "local", "offline"] as Mode[]).map((m) => (
@@ -276,34 +278,8 @@ export function SettingsSheet({
           )}
 
           {tab === "credentials" && (
-            <Card title="Provider Keys (tab-only, sessionStorage)">
-              <p className="text-[11px] text-amber-400/90">⚠️ Tab বন্ধ করলে keys মুছে যাবে — শেয়ার্ড ডিভাইসে keys rotate করুন।</p>
-              {PROVIDERS.map((p) => (
-                <div key={p.key} className="space-y-1 pt-2">
-                  <div className="flex items-center justify-between">
-                    <span className="text-xs text-zinc-300">{p.label}</span>
-                    {results[p.key] === "ok" && <span className="text-green-500 text-[11px]">✓ OK</span>}
-                    {results[p.key] === "fail" && <span className="text-red-500 text-[11px]">✕ Fail</span>}
-                  </div>
-                  <div className="flex gap-2">
-                    <input
-                      type="password"
-                      value={s[p.key] ?? ""}
-                      placeholder={p.placeholder}
-                      onChange={(e) => setS({ ...s, [p.key]: e.target.value })}
-                      className="flex-1 px-2.5 py-1.5 rounded-lg bg-zinc-900 border border-zinc-800 text-xs"
-                    />
-                    <button
-                      disabled={testing === p.key}
-                      onClick={() => testConnection(p.key, s[p.key] ?? "")}
-                      className="px-2.5 py-1.5 rounded-lg bg-zinc-800 text-xs disabled:opacity-50"
-                    >
-                      {testing === p.key ? "..." : "Test"}
-                    </button>
-                  </div>
-                  <p className="text-[10px] text-zinc-600">{p.key} · {p.help}</p>
-                </div>
-              ))}
+            <Card title="Credential Vault">
+              <CredentialVault />
             </Card>
           )}
 
