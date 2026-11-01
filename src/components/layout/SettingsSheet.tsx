@@ -115,7 +115,7 @@ export function SettingsSheet({
       .select("body")
       .limit(1)
       .maybeSingle()
-      .then(({ data }) => setConstitution((data as any)?.content ?? ""));
+      .then(({ data }) => setConstitution((data as any)?.body ?? ""));
   }, [open, tab, constitution]);
 
   if (!open) return null;
