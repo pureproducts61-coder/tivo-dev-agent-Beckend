@@ -30,6 +30,21 @@ function resolveTenant(providedSecret: string | null): { tenantId: string } | nu
   return null;
 }
 
+// --- RESEARCH EGRESS ALLOWLIST (server-selected bound) ---
+// research/fetch may only contact hosts explicitly allowlisted by the super
+// admin. The list is stored server-side in system_map and every change is
+// audited — a request can never widen its own egress.
+const RESEARCH_HOST_KIND = "research_host";
+const RESEARCH_HOST_RE = /^[a-z0-9]([a-z0-9-]{0,61}[a-z0-9])?(\.[a-z0-9]([a-z0-9-]{0,61}[a-z0-9])?)+$/;
+function isAllowedResearchHost(host: string, allowed: string[]): boolean {
+  return allowed.some((d) => host === d || host.endsWith("." + d));
+}
+async function listResearchHosts(sb: any, tenant: string): Promise<string[]> {
+  const { data, error } = await sb.from("system_map").select("name").eq("tenant_id", tenant).eq("kind", RESEARCH_HOST_KIND);
+  if (error) throw new Error("allowlist_unavailable");
+  return (data || []).map((r: any) => String(r.name).toLowerCase()).filter(Boolean);
+}
+
 // SSRF guard: only allow https://<sub>.supabase.co URLs (or known custom self-hosted via env allowlist)
 const SUPABASE_URL_RE = /^https:\/\/[a-z0-9-]+\.supabase\.(co|in)$/i;
 export function isSafeSupabaseUrl(u: string | null | undefined): boolean {
@@ -1284,8 +1299,49 @@ serve(async (req) => {
       return jsonResponse({ error: "Unknown runtimes action" }, 404);
     }
 
+    // --- Research host allowlist management (super admin, audited) ---
+    if (action === "research/allowlist" && (req.method === "GET" || req.method === "POST")) {
+      if (!isSA) return jsonResponse({ error: "Super Admin only" }, 403);
+      if (!supabase) return jsonResponse({ error: "Database not configured" }, 503);
+      if (req.method === "GET") {
+        try {
+          const hosts = await listResearchHosts(supabase, writeTenant);
+          return jsonResponse({ ok: true, hosts: hosts.sort() });
+        } catch {
+          return jsonResponse({ error: "Database operation failed" }, 500);
+        }
+      }
+      const op = String(body?.op || "");
+      const rawHost = String(body?.host || "").trim().toLowerCase()
+        .replace(/^https?:\/\//, "").split("/")[0].split(":")[0].replace(/^\[|\]$/g, "");
+      if (!RESEARCH_HOST_RE.test(rawHost)) return jsonResponse({ error: "Invalid host" }, 400);
+      if (op === "add") {
+        const { error } = await supabase.from("system_map").upsert(
+          { tenant_id: writeTenant, kind: RESEARCH_HOST_KIND, name: rawHost, metadata: { added_by: "super_admin", added_at: new Date().toISOString() } },
+          { onConflict: "tenant_id,kind,name" },
+        );
+        if (error) return jsonResponse((console.error("[db_error]", error), { error: "Database operation failed" }), 500);
+        await audit("super_admin", "research.allowlist_add", rawHost, {});
+        return jsonResponse({ ok: true, host: rawHost });
+      }
+      if (op === "remove") {
+        const { error } = await supabase.from("system_map").delete()
+          .eq("tenant_id", writeTenant).eq("kind", RESEARCH_HOST_KIND).eq("name", rawHost);
+        if (error) return jsonResponse((console.error("[db_error]", error), { error: "Database operation failed" }), 500);
+        await audit("super_admin", "research.allowlist_remove", rawHost, {});
+        return jsonResponse({ ok: true, host: rawHost });
+      }
+      return jsonResponse({ error: "op must be add or remove" }, 400);
+    }
+
     if (action === "research/fetch" && req.method === "POST") {
       if (!isSA) return jsonResponse({ error: "Super Admin only" }, 403);
+      if (!supabase) return jsonResponse({ error: "Database not configured" }, 503);
+      // Dedicated egress rate limit on top of the global one.
+      const rlResearch = checkRateLimit(`research:${T}`, 5);
+      if (!rlResearch.allowed) {
+        return jsonResponse({ error: "Research rate limit exceeded — try again shortly", retry_after_ms: rlResearch.retryAfterMs }, 429);
+      }
       const target = String(body?.url || "");
       const maxChars = Math.min(Number(body?.max_chars) || 20000, 40000);
 
@@ -1306,6 +1362,20 @@ serve(async (req) => {
       if (blockedHost) return jsonResponse({ error: "Blocked host — private, internal and metadata addresses are not allowed" }, 400);
       if ((parsed.port && parsed.port !== "443") || parsed.username || parsed.password) {
         return jsonResponse({ error: "Only the default https port without credentials is allowed" }, 400);
+      }
+      // Server-selected egress bound: the host must have been allowlisted
+      // out-of-band by the super admin, never by this request itself.
+      let allowedHosts: string[];
+      try {
+        allowedHosts = await listResearchHosts(supabase, writeTenant);
+      } catch {
+        return jsonResponse({ error: "Database operation failed" }, 500);
+      }
+      if (!isAllowedResearchHost(host, allowedHosts)) {
+        return jsonResponse(
+          { error: `Host not on the research allowlist — add "${host}" via research/allowlist first`, host },
+          403,
+        );
       }
       // Resolve DNS and reject any name that points at a private/internal address.
       const privIp = (ip: string) => {
