@@ -1299,8 +1299,49 @@ serve(async (req) => {
       return jsonResponse({ error: "Unknown runtimes action" }, 404);
     }
 
+    // --- Research host allowlist management (super admin, audited) ---
+    if (action === "research/allowlist" && (req.method === "GET" || req.method === "POST")) {
+      if (!isSA) return jsonResponse({ error: "Super Admin only" }, 403);
+      if (!supabase) return jsonResponse({ error: "Database not configured" }, 503);
+      if (req.method === "GET") {
+        try {
+          const hosts = await listResearchHosts(supabase, writeTenant);
+          return jsonResponse({ ok: true, hosts: hosts.sort() });
+        } catch {
+          return jsonResponse({ error: "Database operation failed" }, 500);
+        }
+      }
+      const op = String(body?.op || "");
+      const rawHost = String(body?.host || "").trim().toLowerCase()
+        .replace(/^https?:\/\//, "").split("/")[0].split(":")[0].replace(/^\[|\]$/g, "");
+      if (!RESEARCH_HOST_RE.test(rawHost)) return jsonResponse({ error: "Invalid host" }, 400);
+      if (op === "add") {
+        const { error } = await supabase.from("system_map").upsert(
+          { tenant_id: writeTenant, kind: RESEARCH_HOST_KIND, name: rawHost, metadata: { added_by: "super_admin", added_at: new Date().toISOString() } },
+          { onConflict: "tenant_id,kind,name" },
+        );
+        if (error) return jsonResponse((console.error("[db_error]", error), { error: "Database operation failed" }), 500);
+        await audit("super_admin", "research.allowlist_add", rawHost, {});
+        return jsonResponse({ ok: true, host: rawHost });
+      }
+      if (op === "remove") {
+        const { error } = await supabase.from("system_map").delete()
+          .eq("tenant_id", writeTenant).eq("kind", RESEARCH_HOST_KIND).eq("name", rawHost);
+        if (error) return jsonResponse((console.error("[db_error]", error), { error: "Database operation failed" }), 500);
+        await audit("super_admin", "research.allowlist_remove", rawHost, {});
+        return jsonResponse({ ok: true, host: rawHost });
+      }
+      return jsonResponse({ error: "op must be add or remove" }, 400);
+    }
+
     if (action === "research/fetch" && req.method === "POST") {
       if (!isSA) return jsonResponse({ error: "Super Admin only" }, 403);
+      if (!supabase) return jsonResponse({ error: "Database not configured" }, 503);
+      // Dedicated egress rate limit on top of the global one.
+      const rlResearch = checkRateLimit(`research:${T}`, 5);
+      if (!rlResearch.allowed) {
+        return jsonResponse({ error: "Research rate limit exceeded — try again shortly", retry_after_ms: rlResearch.retryAfterMs }, 429);
+      }
       const target = String(body?.url || "");
       const maxChars = Math.min(Number(body?.max_chars) || 20000, 40000);
 
