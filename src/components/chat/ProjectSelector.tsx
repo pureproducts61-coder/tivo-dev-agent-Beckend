@@ -68,7 +68,6 @@ export function ProjectSelector({
       >
         <RefreshCw className={`w-3.5 h-3.5 ${loading ? "animate-spin" : ""}`} />
       </button>
-      {selected?.public_hint}
       {error && <span className="text-red-400 shrink-0 truncate max-w-[40%]">⚠ {error}</span>}
       {!error && selectedId && !selected && !loading && (
         <span className="text-zinc-600 shrink-0">নির্বাচিত প্রজেক্টটি লিস্টে নেই</span>
