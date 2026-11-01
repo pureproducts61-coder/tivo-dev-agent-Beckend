@@ -133,10 +133,16 @@ export function buildProjectActions(ctx: ProjectActionsCtx): InputAction[] {
       desc: "Copy public URL",
       onClick: () =>
         withProject("Generating share link", async (id) => {
-          const { data } = await supabase.from("projects").select("public_url").eq("id", id).maybeSingle();
-          const url = data?.public_url || `${window.location.origin}/projects/${id}`;
-          await navigator.clipboard?.writeText(url);
-          ctx.report(`🔗 Copied to clipboard: ${url}`);
+          // Edge-function read (master secret) — direct table reads return
+          // empty rows for projects created under a different user_id (RLS).
+          const data = await call("project-manager", `get?id=${id}`, null, "GET");
+          const url = data?.project?.public_url || `${window.location.origin}/projects/${id}`;
+          try {
+            await navigator.clipboard.writeText(url);
+            ctx.report(`🔗 Copied to clipboard: ${url}`);
+          } catch {
+            ctx.report(`🔗 Share link: ${url}`);
+          }
         }),
     },
     {
@@ -195,8 +201,8 @@ export function buildProjectActions(ctx: ProjectActionsCtx): InputAction[] {
         withProject("Renaming", async (id) => {
           const name = window.prompt("নতুন project name:");
           if (!name?.trim()) throw new Error("Cancelled");
-          const { error } = await supabase.from("projects").update({ name: name.trim() }).eq("id", id);
-          if (error) throw new Error(error.message);
+          // Canonical path: project-manager update (PUT) with field allowlist.
+          await call("project-manager", "update", { id, name: name.trim() }, "PUT");
           logAudit("project.rename", id, { name: name.trim() });
         }),
     },
@@ -244,8 +250,9 @@ export function buildProjectActions(ctx: ProjectActionsCtx): InputAction[] {
       desc: "Restore archived project",
       onClick: () =>
         withProject("Reopening", async (id) => {
-          const { error } = await supabase.from("projects").update({ archived: false } as any).eq("id", id);
-          if (error) throw new Error(error.message);
+          // `status` is the allowlisted archived flag in project-manager — the
+          // projects table has no bare `archived` column to update directly.
+          await call("project-manager", "update", { id, status: "active" }, "PUT");
           logAudit("project.reopen", id);
         }),
     },
