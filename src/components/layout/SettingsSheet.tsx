@@ -1,6 +1,7 @@
 import { useEffect, useState } from "react";
 import { Link } from "react-router-dom";
 import { supabase } from "@/integrations/supabase/client";
+import { CredentialVault, ModelVault, RuntimeVault } from "@/components/layout/ResourceVault";
 import { useSuperAdmin } from "@/contexts/SuperAdminContext";
 import { PROVIDER_REGISTRY, type CredentialKey } from "@/lib/providers";
 
@@ -111,7 +112,7 @@ export function SettingsSheet({
     if (!open || tab !== "ai" || constitution !== null) return;
     supabase
       .from("ai_constitution")
-      .select("content")
+      .select("body")
       .limit(1)
       .maybeSingle()
       .then(({ data }) => setConstitution((data as any)?.content ?? ""));
@@ -275,6 +276,7 @@ export function SettingsSheet({
                 Cloud secrets fallback (device key খালি থাকলে cloud থেকে নিবে)
               </label>
             </Card>
+            </>
           )}
 
           {tab === "credentials" && (
