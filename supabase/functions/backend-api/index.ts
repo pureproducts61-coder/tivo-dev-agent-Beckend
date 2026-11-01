@@ -30,6 +30,21 @@ function resolveTenant(providedSecret: string | null): { tenantId: string } | nu
   return null;
 }
 
+// --- RESEARCH EGRESS ALLOWLIST (server-selected bound) ---
+// research/fetch may only contact hosts explicitly allowlisted by the super
+// admin. The list is stored server-side in system_map and every change is
+// audited — a request can never widen its own egress.
+const RESEARCH_HOST_KIND = "research_host";
+const RESEARCH_HOST_RE = /^[a-z0-9]([a-z0-9-]{0,61}[a-z0-9])?(\.[a-z0-9]([a-z0-9-]{0,61}[a-z0-9])?)+$/;
+function isAllowedResearchHost(host: string, allowed: string[]): boolean {
+  return allowed.some((d) => host === d || host.endsWith("." + d));
+}
+async function listResearchHosts(sb: any, tenant: string): Promise<string[]> {
+  const { data, error } = await sb.from("system_map").select("name").eq("tenant_id", tenant).eq("kind", RESEARCH_HOST_KIND);
+  if (error) throw new Error("allowlist_unavailable");
+  return (data || []).map((r: any) => String(r.name).toLowerCase()).filter(Boolean);
+}
+
 // SSRF guard: only allow https://<sub>.supabase.co URLs (or known custom self-hosted via env allowlist)
 const SUPABASE_URL_RE = /^https:\/\/[a-z0-9-]+\.supabase\.(co|in)$/i;
 export function isSafeSupabaseUrl(u: string | null | undefined): boolean {
