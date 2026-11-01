@@ -1363,6 +1363,20 @@ serve(async (req) => {
       if ((parsed.port && parsed.port !== "443") || parsed.username || parsed.password) {
         return jsonResponse({ error: "Only the default https port without credentials is allowed" }, 400);
       }
+      // Server-selected egress bound: the host must have been allowlisted
+      // out-of-band by the super admin, never by this request itself.
+      let allowedHosts: string[];
+      try {
+        allowedHosts = await listResearchHosts(supabase, writeTenant);
+      } catch {
+        return jsonResponse({ error: "Database operation failed" }, 500);
+      }
+      if (!isAllowedResearchHost(host, allowedHosts)) {
+        return jsonResponse(
+          { error: `Host not on the research allowlist — add "${host}" via research/allowlist first`, host },
+          403,
+        );
+      }
       // Resolve DNS and reject any name that points at a private/internal address.
       const privIp = (ip: string) => {
         ip = ip.toLowerCase();
