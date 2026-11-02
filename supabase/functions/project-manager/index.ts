@@ -1,5 +1,7 @@
 import { serve } from "https://deno.land/std@0.168.0/http/server.ts";
 import { createClient } from "https://esm.sh/@supabase/supabase-js@2";
+import { zipSync, strToU8 } from "https://esm.sh/fflate@0.8.2";
+import { encodeBase64 } from "https://deno.land/std@0.224.0/encoding/base64.ts";
 
 const corsHeaders = {
   "Access-Control-Allow-Origin": "*",
