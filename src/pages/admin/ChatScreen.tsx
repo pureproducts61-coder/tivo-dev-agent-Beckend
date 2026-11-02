@@ -535,8 +535,7 @@ export default function ChatScreen() {
     // ── Cognition: goal → resources → gaps → composition (truthful, no execution) ──
     try {
       const { data: u } = await supabase.auth.getUser();
-      let pid: string | null = null;
-      try { pid = sessionStorage.getItem(CURRENT_PROJECT_KEY); } catch { /* none */ }
+      const pid: string | null = selectedProjectId;
       const resources = pid ? [{ kind: "project" as const, id: pid }] : [];
       const probe = dissectGoal(text, { userId: u.user?.id ?? null, resources, availableCapabilities: [] });
       const caps = Array.from(new Set<Capability>(["chat", ...probe.requiredCapabilities]));
@@ -706,10 +705,7 @@ export default function ChatScreen() {
         return;
       }
       const rt = sel.runtime as ExecutionRuntimeAdapter;
-      let projectId: string | null = projectParam;
-      if (!projectId) {
-        try { projectId = sessionStorage.getItem(CURRENT_PROJECT_KEY); } catch { projectId = null; }
-      }
+      const projectId: string | null = selectedProjectId;
       if (capability !== "command_execute" && !projectId) {
         const msg = `⚠️ **${capability}** needs a selected project. Pick one on the Projects screen (or open chat with ?project=<id>). Nothing was executed.`;
         emitTivoEvent("task.failed", { conversationId: convId, capability, runtime: rt.id, message: "no project selected" });
@@ -814,6 +810,13 @@ export default function ChatScreen() {
 
   return (
     <div className="flex flex-col h-full min-h-0 flex-1">
+      <div className="shrink-0 border-b border-zinc-900 px-3 sm:px-6 py-2">
+        <ProjectSelector
+          masterSecret={session?.masterSecret || ""}
+          selectedId={selectedProjectId}
+          onChange={pickProject}
+        />
+      </div>
       <div ref={scrollRef} className="flex-1 min-h-0 overflow-y-auto px-3 sm:px-6 py-4 space-y-5 max-w-3xl w-full mx-auto">
         {messages.length === 0 && (
           <div className="text-center py-20 animate-fade-in">
