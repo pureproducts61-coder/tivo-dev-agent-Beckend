@@ -3,7 +3,8 @@ import { useSearchParams } from "react-router-dom";
 import { useSuperAdmin } from "@/contexts/SuperAdminContext";
 import { ChatMessage, ChatMsg, Artifact, validateArtifact } from "@/components/chat/ChatMessage";
 import { ChatInput } from "@/components/chat/ChatInput";
-import { buildProjectActions } from "@/lib/projectActions";
+import { buildProjectActions, projectBackendCall } from "@/lib/projectActions";
+import { ProjectSelector } from "@/components/chat/ProjectSelector";
 import { SecurityScanPanel } from "@/components/chat/SecurityScanPanel";
 import { VariablesPanel } from "@/components/admin/VariablesPanel";
 import { SuggestionChips } from "@/components/chat/SuggestionChips";
@@ -772,18 +773,9 @@ export default function ChatScreen() {
     // (?project=<id> in the URL, or the one picked on the Projects screen).
     resolveProject: async () => {
       const id = selectedProjectId;
-      if (!id) {
-        pushSystem("⚠️ আগে উপরের বার থেকে একটি প্রজেক্ট বেছে নাও।");
-        return null;
-      }
+      if (!id) return null;
       // Edge read (master secret) — direct table reads can be hidden by RLS.
-      const res = await fetch(`${BACKEND}/functions/v1/project-manager/get?id=${id}`, {
-        headers: {
-          "x-master-secret": session?.masterSecret || "",
-          apikey: import.meta.env.VITE_SUPABASE_PUBLISHABLE_KEY,
-        },
-      });
-      const data = await res.json().catch(() => null);
+      const data = await projectBackendCall(session?.masterSecret || "", "project-manager", `get?id=${id}`, null, "GET");
       const p = data?.project;
       return p ? { id: p.id, name: p.name } : null;
     },
