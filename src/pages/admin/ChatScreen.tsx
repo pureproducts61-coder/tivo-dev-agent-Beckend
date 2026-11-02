@@ -272,6 +272,18 @@ export default function ChatScreen() {
   const abortRef = useRef<AbortController | null>(null);
   /** Local message ids already written to `public.messages` — blocks double inserts. */
   const persistedRef = useRef<Set<string>>(new Set());
+  const selfCreatedConvRef = useRef<string | null>(null);
+  const [selectedProjectId, setSelectedProjectId] = useState<string | null>(() => {
+    if (projectParam) return projectParam;
+    try { return sessionStorage.getItem(CURRENT_PROJECT_KEY); } catch { return null; }
+  });
+  function pickProject(id: string | null) {
+    setSelectedProjectId(id);
+    try {
+      if (id) sessionStorage.setItem(CURRENT_PROJECT_KEY, id);
+      else sessionStorage.removeItem(CURRENT_PROJECT_KEY);
+    } catch { /* storage unavailable */ }
+  }
 
   useEffect(() => {
     scrollRef.current?.scrollTo({ top: scrollRef.current.scrollHeight, behavior: "smooth" });
@@ -297,6 +309,12 @@ export default function ChatScreen() {
   // ── Restore the exact conversation named by ?conv=<uuid> ───────────────────
   useEffect(() => {
     let cancelled = false;
+    // Conversation was just created by this screen — local state is the truth.
+    if (convParam && convParam === selfCreatedConvRef.current) {
+      setConversationId(convParam);
+      return;
+    }
+    selfCreatedConvRef.current = null;
     setConversationId(convParam);
     persistedRef.current = new Set();
     setChips([]);
@@ -397,6 +415,9 @@ export default function ChatScreen() {
         .single();
       if (error) throw new Error(error.message);
       const id = data.id as string;
+      // Mark as created in this live session so the restore effect does not
+      // overwrite the in-flight streaming reply with a partial DB copy.
+      selfCreatedConvRef.current = id;
       setConversationId(id);
       // Keep the URL shareable/refreshable without remounting a new chat.
       setSearchParams(
