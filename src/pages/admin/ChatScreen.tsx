@@ -3,7 +3,8 @@ import { useSearchParams } from "react-router-dom";
 import { useSuperAdmin } from "@/contexts/SuperAdminContext";
 import { ChatMessage, ChatMsg, Artifact, validateArtifact } from "@/components/chat/ChatMessage";
 import { ChatInput } from "@/components/chat/ChatInput";
-import { buildProjectActions } from "@/lib/projectActions";
+import { buildProjectActions, projectBackendCall } from "@/lib/projectActions";
+import { ProjectSelector } from "@/components/chat/ProjectSelector";
 import { SecurityScanPanel } from "@/components/chat/SecurityScanPanel";
 import { VariablesPanel } from "@/components/admin/VariablesPanel";
 import { SuggestionChips } from "@/components/chat/SuggestionChips";
@@ -272,6 +273,18 @@ export default function ChatScreen() {
   const abortRef = useRef<AbortController | null>(null);
   /** Local message ids already written to `public.messages` — blocks double inserts. */
   const persistedRef = useRef<Set<string>>(new Set());
+  const selfCreatedConvRef = useRef<string | null>(null);
+  const [selectedProjectId, setSelectedProjectId] = useState<string | null>(() => {
+    if (projectParam) return projectParam;
+    try { return sessionStorage.getItem(CURRENT_PROJECT_KEY); } catch { return null; }
+  });
+  function pickProject(id: string | null) {
+    setSelectedProjectId(id);
+    try {
+      if (id) sessionStorage.setItem(CURRENT_PROJECT_KEY, id);
+      else sessionStorage.removeItem(CURRENT_PROJECT_KEY);
+    } catch { /* storage unavailable */ }
+  }
 
   useEffect(() => {
     scrollRef.current?.scrollTo({ top: scrollRef.current.scrollHeight, behavior: "smooth" });
@@ -297,6 +310,12 @@ export default function ChatScreen() {
   // ── Restore the exact conversation named by ?conv=<uuid> ───────────────────
   useEffect(() => {
     let cancelled = false;
+    // Conversation was just created by this screen — local state is the truth.
+    if (convParam && convParam === selfCreatedConvRef.current) {
+      setConversationId(convParam);
+      return;
+    }
+    selfCreatedConvRef.current = null;
     setConversationId(convParam);
     persistedRef.current = new Set();
     setChips([]);
@@ -397,6 +416,9 @@ export default function ChatScreen() {
         .single();
       if (error) throw new Error(error.message);
       const id = data.id as string;
+      // Mark as created in this live session so the restore effect does not
+      // overwrite the in-flight streaming reply with a partial DB copy.
+      selfCreatedConvRef.current = id;
       setConversationId(id);
       // Keep the URL shareable/refreshable without remounting a new chat.
       setSearchParams(
@@ -513,8 +535,7 @@ export default function ChatScreen() {
     // ── Cognition: goal → resources → gaps → composition (truthful, no execution) ──
     try {
       const { data: u } = await supabase.auth.getUser();
-      let pid: string | null = null;
-      try { pid = sessionStorage.getItem(CURRENT_PROJECT_KEY); } catch { /* none */ }
+      const pid: string | null = selectedProjectId;
       const resources = pid ? [{ kind: "project" as const, id: pid }] : [];
       const probe = dissectGoal(text, { userId: u.user?.id ?? null, resources, availableCapabilities: [] });
       const caps = Array.from(new Set<Capability>(["chat", ...probe.requiredCapabilities]));
@@ -684,10 +705,7 @@ export default function ChatScreen() {
         return;
       }
       const rt = sel.runtime as ExecutionRuntimeAdapter;
-      let projectId: string | null = projectParam;
-      if (!projectId) {
-        try { projectId = sessionStorage.getItem(CURRENT_PROJECT_KEY); } catch { projectId = null; }
-      }
+      const projectId: string | null = selectedProjectId;
       if (capability !== "command_execute" && !projectId) {
         const msg = `⚠️ **${capability}** needs a selected project. Pick one on the Projects screen (or open chat with ?project=<id>). Nothing was executed.`;
         emitTivoEvent("task.failed", { conversationId: convId, capability, runtime: rt.id, message: "no project selected" });
@@ -750,22 +768,12 @@ export default function ChatScreen() {
     // NEVER guess: the chat acts on the explicitly selected project only
     // (?project=<id> in the URL, or the one picked on the Projects screen).
     resolveProject: async () => {
-      let id = projectParam;
-      if (!id) {
-        try {
-          id = sessionStorage.getItem(CURRENT_PROJECT_KEY);
-        } catch {
-          id = null;
-        }
-      }
+      const id = selectedProjectId;
       if (!id) return null;
-      const { data, error } = await supabase
-        .from("projects")
-        .select("id, name")
-        .eq("id", id)
-        .maybeSingle();
-      if (error) throw new Error(error.message);
-      return data ?? null;
+      // Edge read (master secret) — direct table reads can be hidden by RLS.
+      const data = await projectBackendCall(session?.masterSecret || "", "project-manager", `get?id=${id}`, null, "GET");
+      const p = data?.project;
+      return p ? { id: p.id, name: p.name } : null;
     },
     report: (msg, artifacts) => pushSystem(msg, artifacts),
     openSecurityScan: () => setScanOpen(true),
@@ -802,6 +810,13 @@ export default function ChatScreen() {
 
   return (
     <div className="flex flex-col h-full min-h-0 flex-1">
+      <div className="shrink-0 border-b border-zinc-900 px-3 sm:px-6 py-2">
+        <ProjectSelector
+          masterSecret={session?.masterSecret || ""}
+          selectedId={selectedProjectId}
+          onChange={pickProject}
+        />
+      </div>
       <div ref={scrollRef} className="flex-1 min-h-0 overflow-y-auto px-3 sm:px-6 py-4 space-y-5 max-w-3xl w-full mx-auto">
         {messages.length === 0 && (
           <div className="text-center py-20 animate-fade-in">

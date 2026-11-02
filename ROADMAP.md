@@ -23,6 +23,7 @@ runtimeConnections, approval, verification, recovery, tdef.
 - [x] 4 Verification (6 states) + scoped approval + 5-step recovery (tests: step4.test.ts)
 - [x] 5 Dynamic synthesis (synthesis.ts, step5.test.ts) & gap negotiation — Brain reports gaps, proposes alternatives, asks user; never invents tools
 - [ ] 6 Dynamic Resource & Credential Vault UI — add/remove local/external/Lovable models, runtimes, hosting; secret-free status (connected, health, capabilities, approval needed). Merge HybridSettings + System into SettingsSheet. Fix credential-name mismatch.
+- [x] 6a Chat fixes — first reply no longer wiped by restore, project picker in chat bar, ⋮ menu acts on picked project, real ZIP download, truthful analytics/visitors/performance
 - [ ] 7 Real execution & observability — ai-engine uses brain.selectProvider (remove hardcoded gateway, fix stream fallback); job_queue worker/Docker runtime; real logs/exit codes; DEGRADED/UNAVAILABLE honesty; unify proposals denied/rejected
 - [ ] 8 Dynamic conversational UI — plan preview, one-click approve/customize, live status, evidence badges, verdict + recovery explanation; unify constitution into ai_constitution (10 primitives + rules)
 - [ ] 9 Native export — APK/EXE/ZIP with hash/size verification and download

@@ -1,5 +1,7 @@
 import { serve } from "https://deno.land/std@0.168.0/http/server.ts";
 import { createClient } from "https://esm.sh/@supabase/supabase-js@2";
+import { zipSync, strToU8 } from "https://esm.sh/fflate@0.8.2";
+import { encodeBase64 } from "https://deno.land/std@0.224.0/encoding/base64.ts";
 
 const corsHeaders = {
   "Access-Control-Allow-Origin": "*",
@@ -489,10 +491,80 @@ serve(async (req) => {
         details: { project_id: id, project_name: project.name, file_count: files.length, tenant_id: tenantId },
       });
 
-      return jsonResponse({ success: true, bundle });
+      // Real ZIP archive (base64) so the client can download it directly.
+      const entries: Record<string, Uint8Array> = {};
+      for (const f of bundle.files as any[]) {
+        const p = String(f?.path || "").replace(/^\/+/, "");
+        if (!p || p.split("/").includes("..")) continue;
+        entries[`${bundle.project_name}/${p}`] = strToU8(typeof f.content === "string" ? f.content : JSON.stringify(f.content ?? ""));
+      }
+      const zipped = zipSync(entries, { level: 6 });
+      return jsonResponse({
+        success: true,
+        name: bundle.project_name,
+        base64: encodeBase64(zipped),
+        size: zipped.length,
+        file_count: Object.keys(entries).length,
+        bundle: { ...bundle, files: undefined },
+      });
     }
 
     // === GET PUBLIC URL ===
+    // === ANALYTICS / VISITORS / PERFORMANCE — real recorded facts only ===
+    if ((action === "analytics" || action === "visitors" || action === "performance") && req.method === "GET") {
+      const id = url.searchParams.get("id");
+      if (!id) return jsonResponse({ error: "id required" }, 400);
+      const { data: project } = await scope(
+        supabase.from("projects").select("id, name, build_status, public_url, version_history, updated_at, created_at").eq("id", id),
+      ).single();
+      if (!project) return jsonResponse({ error: "Project not found" }, 404);
+
+      if (action === "analytics") {
+        const { data: logs } = await supabase
+          .from("memory_logs")
+          .select("action, created_at")
+          .contains("details", { project_id: id })
+          .order("created_at", { ascending: false })
+          .limit(200);
+        const counts: Record<string, number> = {};
+        for (const l of logs ?? []) counts[l.action] = (counts[l.action] || 0) + 1;
+        return jsonResponse({
+          project: project.name,
+          build_status: project.build_status,
+          published: !!project.public_url,
+          versions: Array.isArray(project.version_history) ? project.version_history.length : 0,
+          recorded_events: counts,
+          last_event_at: logs?.[0]?.created_at ?? null,
+        });
+      }
+      if (action === "visitors") {
+        return jsonResponse({
+          project: project.name,
+          status: "UNAVAILABLE",
+          reason: "কোনো visitor-tracking runtime সংযুক্ত নেই — তাই কোনো সংখ্যা দেখানো হচ্ছে না।",
+        });
+      }
+      // performance: measure the published URL for real, if any.
+      if (!project.public_url || !/^https:\/\//i.test(project.public_url)) {
+        return jsonResponse({ project: project.name, status: "UNAVAILABLE", reason: "প্রজেক্ট এখনও publish হয়নি (বা https URL নেই)।" });
+      }
+      const t0 = Date.now();
+      try {
+        const ctrl = new AbortController();
+        const timer = setTimeout(() => ctrl.abort(), 8000);
+        const r = await fetch(project.public_url, { signal: ctrl.signal, redirect: "follow" });
+        clearTimeout(timer);
+        const body = await r.arrayBuffer();
+        return jsonResponse({
+          project: project.name, url: project.public_url, status: r.ok ? "UP" : "ERROR",
+          http_status: r.status, response_ms: Date.now() - t0, bytes: body.byteLength,
+          measured_at: new Date().toISOString(),
+        });
+      } catch (e) {
+        return jsonResponse({ project: project.name, url: project.public_url, status: "DOWN", error: String((e as Error)?.message || e), response_ms: Date.now() - t0 });
+      }
+    }
+
     if (action === "public-url" && req.method === "GET") {
       const id = url.searchParams.get("id");
       if (!id) return jsonResponse({ error: "id required" }, 400);

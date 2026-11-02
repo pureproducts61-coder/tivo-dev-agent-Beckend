@@ -61,7 +61,7 @@ export function buildProjectActions(ctx: ProjectActionsCtx): InputAction[] {
     try {
       const project = await ctx.resolveProject();
       if (!project) {
-        ctx.report(`⚠️ ${label} cancelled — কোনো project নেই। প্রথমে Projects ট্যাবে একটা তৈরি করো।`);
+        ctx.report(`⚠️ ${label} cancelled — কোনো project বাছাই করা নেই। উপরের "প্রজেক্ট" বার থেকে একটি বেছে নাও (না থাকলে Projects ট্যাবে তৈরি করো)।`);
         return;
       }
       await fn(project.id);
