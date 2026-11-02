@@ -491,7 +491,22 @@ serve(async (req) => {
         details: { project_id: id, project_name: project.name, file_count: files.length, tenant_id: tenantId },
       });
 
-      return jsonResponse({ success: true, bundle });
+      // Real ZIP archive (base64) so the client can download it directly.
+      const entries: Record<string, Uint8Array> = {};
+      for (const f of bundle.files as any[]) {
+        const p = String(f?.path || "").replace(/^\/+/, "");
+        if (!p || p.split("/").includes("..")) continue;
+        entries[`${bundle.project_name}/${p}`] = strToU8(typeof f.content === "string" ? f.content : JSON.stringify(f.content ?? ""));
+      }
+      const zipped = zipSync(entries, { level: 6 });
+      return jsonResponse({
+        success: true,
+        name: bundle.project_name,
+        base64: encodeBase64(zipped),
+        size: zipped.length,
+        file_count: Object.keys(entries).length,
+        bundle: { ...bundle, files: undefined },
+      });
     }
 
     // === GET PUBLIC URL ===
