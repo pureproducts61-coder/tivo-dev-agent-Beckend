@@ -771,22 +771,21 @@ export default function ChatScreen() {
     // NEVER guess: the chat acts on the explicitly selected project only
     // (?project=<id> in the URL, or the one picked on the Projects screen).
     resolveProject: async () => {
-      let id = projectParam;
+      const id = selectedProjectId;
       if (!id) {
-        try {
-          id = sessionStorage.getItem(CURRENT_PROJECT_KEY);
-        } catch {
-          id = null;
-        }
+        pushSystem("⚠️ আগে উপরের বার থেকে একটি প্রজেক্ট বেছে নাও।");
+        return null;
       }
-      if (!id) return null;
-      const { data, error } = await supabase
-        .from("projects")
-        .select("id, name")
-        .eq("id", id)
-        .maybeSingle();
-      if (error) throw new Error(error.message);
-      return data ?? null;
+      // Edge read (master secret) — direct table reads can be hidden by RLS.
+      const res = await fetch(`${BACKEND}/functions/v1/project-manager/get?id=${id}`, {
+        headers: {
+          "x-master-secret": session?.masterSecret || "",
+          apikey: import.meta.env.VITE_SUPABASE_PUBLISHABLE_KEY,
+        },
+      });
+      const data = await res.json().catch(() => null);
+      const p = data?.project;
+      return p ? { id: p.id, name: p.name } : null;
     },
     report: (msg, artifacts) => pushSystem(msg, artifacts),
     openSecurityScan: () => setScanOpen(true),
