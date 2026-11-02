@@ -545,8 +545,8 @@ serve(async (req) => {
         });
       }
       // performance: measure the published URL for real, if any.
-      if (!project.public_url) {
-        return jsonResponse({ project: project.name, status: "UNAVAILABLE", reason: "প্রজেক্ট এখনও publish হয়নি।" });
+      if (!project.public_url || !/^https:\/\//i.test(project.public_url)) {
+        return jsonResponse({ project: project.name, status: "UNAVAILABLE", reason: "প্রজেক্ট এখনও publish হয়নি (বা https URL নেই)।" });
       }
       const t0 = Date.now();
       try {
