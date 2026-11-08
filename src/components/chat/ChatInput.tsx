@@ -38,10 +38,12 @@ interface Props {
   onFilesChange: (f: File[]) => void;
   actions?: InputAction[]; // three-dot menu items
   placeholder?: string;
+  /** Rendered at the very top of the three-dot menu (e.g. project picker). */
+  menuHeader?: import("react").ReactNode;
 }
 
 export function ChatInput({
-  value, onChange, onSend, onStop, streaming, files, onFilesChange, actions = [], placeholder
+  value, onChange, onSend, onStop, streaming, files, onFilesChange, actions = [], placeholder, menuHeader
 }: Props) {
   const ta = useRef<HTMLTextAreaElement>(null);
   const [menuOpen, setMenuOpen] = useState(false);
@@ -141,8 +143,14 @@ export function ChatInput({
                 {menuOpen && (
                   <div
                     onClick={(e) => e.stopPropagation()}
-                    className="absolute left-0 bottom-12 w-60 max-h-[52vh] overflow-y-auto overscroll-contain rounded-2xl border border-zinc-800 bg-zinc-950/95 backdrop-blur-lg shadow-2xl shadow-black/60 p-1 z-50 animate-scale-in origin-bottom-left scrollbar-thin scrollbar-thumb-zinc-800"
+                    className="absolute left-0 bottom-12 w-72 max-h-[52vh] overflow-y-auto overscroll-contain rounded-2xl border border-zinc-800 bg-zinc-950/95 backdrop-blur-lg shadow-2xl shadow-black/60 p-1 z-50 animate-scale-in origin-bottom-left scrollbar-thin scrollbar-thumb-zinc-800"
                   >
+                    {menuHeader && (
+                      <div className="px-1.5 pt-1.5 pb-2 mb-1 border-b border-zinc-800">
+                        <div className="px-1 pb-1 text-[10px] uppercase tracking-wider text-zinc-500">Current project</div>
+                        {menuHeader}
+                      </div>
+                    )}
                     {GROUP_ORDER.map((g) => {
                       const items = actions.filter((a) => (a.group ?? "project") === g);
                       if (!items.length) return null;

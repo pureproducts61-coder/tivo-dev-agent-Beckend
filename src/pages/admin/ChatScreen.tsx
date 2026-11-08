@@ -810,13 +810,6 @@ export default function ChatScreen() {
 
   return (
     <div className="flex flex-col h-full min-h-0 flex-1">
-      <div className="shrink-0 border-b border-zinc-900 px-3 sm:px-6 py-2">
-        <ProjectSelector
-          masterSecret={session?.masterSecret || ""}
-          selectedId={selectedProjectId}
-          onChange={pickProject}
-        />
-      </div>
       <div ref={scrollRef} className="flex-1 min-h-0 overflow-y-auto px-3 sm:px-6 py-4 space-y-5 max-w-3xl w-full mx-auto">
         {messages.length === 0 && (
           <div className="text-center py-20 animate-fade-in">
@@ -887,6 +880,13 @@ export default function ChatScreen() {
           files={files}
           onFilesChange={setFiles}
           actions={actions}
+          menuHeader={
+            <ProjectSelector
+              masterSecret={session?.masterSecret || ""}
+              selectedId={selectedProjectId}
+              onChange={pickProject}
+            />
+          }
         />
       </div>
 

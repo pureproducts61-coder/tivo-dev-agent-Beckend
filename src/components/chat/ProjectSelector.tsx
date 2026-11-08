@@ -43,9 +43,8 @@ export function ProjectSelector({
   const selected = projects.find((p) => p.id === selectedId) || null;
 
   return (
-    <div className="flex items-center gap-2 max-w-3xl w-full mx-auto text-xs">
+    <div className="flex flex-wrap items-center gap-1.5 w-full text-xs">
       <FolderOpen className="w-3.5 h-3.5 text-amber-500/80 shrink-0" />
-      <span className="text-zinc-500 shrink-0 hidden sm:inline">প্রজেক্ট</span>
       <select
         value={selectedId ?? ""}
         onChange={(e) => onChange(e.target.value || null)}
