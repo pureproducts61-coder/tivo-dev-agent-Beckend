@@ -16,6 +16,7 @@ import { route, dissectGoal } from "@/lib/tivo/router";
 import { emitTivoEvent } from "@/lib/tivo/events";
 import { capabilityClass, type Capability } from "@/lib/tivo/capabilities";
 import type { ExecutionRuntimeAdapter } from "@/lib/tivo/runtimes";
+import { wantsPlan, proposePlan, executePlan, type AgentPlan } from "@/lib/tivo/agentLoop";
 
 
 
@@ -274,6 +275,7 @@ export default function ChatScreen() {
   /** Local message ids already written to `public.messages` — blocks double inserts. */
   const persistedRef = useRef<Set<string>>(new Set());
   const selfCreatedConvRef = useRef<string | null>(null);
+  const planConvRef = useRef<string | null>(null);
   const [selectedProjectId, setSelectedProjectId] = useState<string | null>(() => {
     if (projectParam) return projectParam;
     try { return sessionStorage.getItem(CURRENT_PROJECT_KEY); } catch { return null; }
@@ -530,6 +532,26 @@ export default function ChatScreen() {
     const assistantId = uid();
     setMessages((m) => [...m, { id: assistantId, role: "assistant", content: "", ts: Date.now() }]);
 
+    // ── Plan-first project requests: propose → user approves once → execute ──
+    if (wantsPlan(text) && filesToSend.length === 0) {
+      try {
+        setStatusText("📋 প্ল্যান তৈরি করছি...");
+        const plan = await proposePlan(text, callModel);
+        const note = `📋 প্ল্যান প্রস্তুত: ${plan.summary}`;
+        setMessages((m) => m.map((x) => (x.id === assistantId ? { ...x, content: "", plan } : x)));
+        void persistMessage(convId, assistantId, "assistant", note);
+        planConvRef.current = convId;
+      } catch (e: any) {
+        const msg = `❌ প্ল্যান তৈরি হয়নি: ${e?.message || e}। আবার চেষ্টা করো বা আরও স্পষ্ট করে লেখো।`;
+        setMessages((m) => m.map((x) => (x.id === assistantId ? { ...x, content: msg } : x)));
+      } finally {
+        setStreaming(false);
+        setStatusText(null);
+        abortRef.current = null;
+      }
+      return;
+    }
+
     // ── ONE Brain → capability router → a runtime that is really reachable ──
     const decision = await route(registry, text);
     // ── Cognition: goal → resources → gaps → composition (truthful, no execution) ──
@@ -677,6 +699,77 @@ export default function ChatScreen() {
     }
   }
 
+
+  /** Non-streaming model call used by the agent loop (proposals only). */
+  async function callModel(msgs: { role: string; content: string }[]): Promise<string> {
+    if (!session) throw new Error("no session");
+    const sys = msgs.filter((m) => m.role === "system").map((m) => m.content).join("\n");
+    const rest = msgs.filter((m) => m.role !== "system");
+    const res = await fetch(`${BACKEND}/functions/v1/ai-engine/chat`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json", "x-master-secret": session.masterSecret },
+      body: JSON.stringify({ messages: rest, system_prompt: sys, stream: false }),
+    });
+    const data = await res.json().catch(() => ({}));
+    if (!res.ok || typeof data?.response !== "string") throw new Error(data?.error || `AI error ${res.status}`);
+    return data.response;
+  }
+
+  function patchMsg(id: string, patch: Partial<ChatMsg>) {
+    setMessages((m) => m.map((x) => (x.id === id ? { ...x, ...patch, plan: patch.plan ?? x.plan } : x)));
+  }
+
+  function cancelPlan(id: string) {
+    const msg = messages.find((x) => x.id === id);
+    if (!msg?.plan) return;
+    patchMsg(id, { plan: { ...msg.plan, status: "cancelled" }, content: "প্ল্যান বাতিল করা হয়েছে। কিছু লেখা হয়নি।" });
+  }
+
+  /** User approved the plan once: write files into the project, then VERIFY. */
+  async function approvePlan(id: string) {
+    if (!session || streaming) return;
+    const msg = messages.find((x) => x.id === id);
+    if (!msg?.plan || msg.plan.status !== "proposed") return;
+    const plan: AgentPlan = { ...msg.plan, status: "running" };
+    patchMsg(id, { plan, progress: "শুরু করছি..." });
+    setStreaming(true);
+    const convId = planConvRef.current ?? conversationId;
+    try {
+      let projectId = selectedProjectId;
+      if (!projectId) {
+        patchMsg(id, { progress: "🆕 নতুন প্রজেক্ট তৈরি করছি..." });
+        const { data: u } = await supabase.auth.getUser();
+        const name = (plan.goal.replace(/^\s*\/plan\s+/i, "").replace(/[^A-Za-z0-9 ._-]/g, "").trim().slice(0, 40)) || `TIVO Project ${new Date().toISOString().slice(0, 10)}`;
+        const r = await projectBackendCall(session.masterSecret, "project-manager", "create", {
+          user_id: u.user?.id, name, description: plan.summary,
+        });
+        projectId = r?.project?.id;
+        if (!projectId) throw new Error("project could not be created");
+        pickProject(projectId);
+      }
+      const pid = projectId;
+      const { ok, report } = await executePlan(plan, {
+        call: callModel,
+        upload: async (files) => {
+          const r = await projectBackendCall(session.masterSecret, "project-manager", "upload-files", { project_id: pid, files });
+          return (r?.uploads ?? []).map((u: any) => ({ path: u.path, success: !!u.success }));
+        },
+        listStored: async () => {
+          const r = await projectBackendCall(session.masterSecret, "project-manager", `get?id=${encodeURIComponent(pid)}`, null, "GET");
+          return ((r?.project?.files as any[]) ?? []).map((f) => f?.path).filter(Boolean);
+        },
+        onProgress: (p) => patchMsg(id, { progress: p }),
+        correlationId: id,
+      });
+      patchMsg(id, { plan: { ...plan, status: ok ? "verified" : "failed", report }, content: report, progress: undefined });
+      await persistMessage(convId, `${id}-report`, "assistant", report);
+    } catch (e: any) {
+      const report = `❌ কাজ শুরু/শেষ করা যায়নি: ${e?.message || e}। কিছু সফল হয়েছে বলে ধরা হয়নি।`;
+      patchMsg(id, { plan: { ...plan, status: "failed", report }, content: report, progress: undefined });
+    } finally {
+      setStreaming(false);
+    }
+  }
 
   /**
    * Runs an execution capability through the real job_queue runtime.
@@ -826,6 +919,8 @@ export default function ChatScreen() {
             streaming={streaming && m.id === messages[messages.length - 1]?.id}
             onEdit={handleEdit}
             onFeedback={handleFeedback}
+            onApprovePlan={approvePlan}
+            onCancelPlan={cancelPlan}
           />
         ))}
 

@@ -1,5 +1,6 @@
 import { useState, useMemo } from "react";
 import type { GoalDissection } from "@/lib/tivo/cognition";
+import type { AgentPlan } from "@/lib/tivo/agentLoop";
 import { CognitionTrace, shouldSurface } from "./CognitionTrace";
 import ReactMarkdown from "react-markdown";
 import remarkGfm from "remark-gfm";
@@ -30,6 +31,55 @@ export interface ChatMsg {
   feedback?: "up" | "down" | null;
   /** How the Brain dissected the goal (live, not persisted). */
   cognition?: GoalDissection;
+  /** Plan proposed by the agent loop; executed only after the user approves. */
+  plan?: AgentPlan;
+  /** Live progress line while an approved plan runs. */
+  progress?: string;
+}
+
+function PlanCard({
+  plan, progress, onApprove, onCancel,
+}: { plan: AgentPlan; progress?: string; onApprove?: () => void; onCancel?: () => void }) {
+  const label: Record<AgentPlan["status"], string> = {
+    proposed: "অনুমোদনের অপেক্ষায়", approved: "অনুমোদিত", running: "কাজ চলছে",
+    verified: "যাচাই সম্পন্ন", failed: "সম্পূর্ণ হয়নি", cancelled: "বাতিল",
+  };
+  return (
+    <div className="mb-3 rounded-xl border border-amber-800/50 bg-zinc-900/70 p-3 text-sm">
+      <div className="flex items-center justify-between gap-2 mb-2">
+        <div className="font-semibold text-amber-300">📋 প্রজেক্ট প্ল্যান</div>
+        <span className="text-[10px] px-2 py-0.5 rounded-full border border-zinc-700 text-zinc-300">{label[plan.status]}</span>
+      </div>
+      <p className="text-zinc-200 mb-2">{plan.summary}</p>
+      {plan.steps.length > 0 && (
+        <ol className="list-decimal pl-5 text-zinc-300 space-y-0.5 mb-2">
+          {plan.steps.map((s, i) => <li key={i}>{s}</li>)}
+        </ol>
+      )}
+      <div className="text-[11px] text-zinc-400 mb-1">ফাইল ({plan.files.length}):</div>
+      <ul className="text-[12px] text-zinc-300 space-y-0.5 mb-2">
+        {plan.files.map((f) => (
+          <li key={f.path}><code className="text-amber-300">{f.path}</code>{f.purpose ? ` — ${f.purpose}` : ""}</li>
+        ))}
+      </ul>
+      {plan.rejected.length > 0 && (
+        <div className="text-[11px] text-red-300/80 mb-2">Brain বাতিল করেছে: {plan.rejected.join(", ")}</div>
+      )}
+      {plan.status === "running" && progress && (
+        <div className="text-[12px] text-zinc-300 animate-pulse">{progress}</div>
+      )}
+      {plan.status === "proposed" && (
+        <div className="flex gap-2 mt-2">
+          <button onClick={onApprove} className="px-3 py-1.5 rounded-lg bg-amber-500 text-zinc-950 font-medium hover:bg-amber-400 transition">
+            ✅ অনুমোদন করো ও তৈরি করো
+          </button>
+          <button onClick={onCancel} className="px-3 py-1.5 rounded-lg border border-zinc-700 text-zinc-300 hover:bg-zinc-800 transition">
+            বাতিল
+          </button>
+        </div>
+      )}
+    </div>
+  );
 }
 
 const COLLAPSE_LIMIT = 380;
@@ -109,11 +159,15 @@ export function ChatMessage({
   streaming,
   onEdit,
   onFeedback,
+  onApprovePlan,
+  onCancelPlan,
 }: {
   msg: ChatMsg;
   streaming?: boolean;
   onEdit?: (id: string, text: string) => void;
   onFeedback?: (id: string, value: "up" | "down") => void;
+  onApprovePlan?: (id: string) => void;
+  onCancelPlan?: (id: string) => void;
 }) {
   const [expanded, setExpanded] = useState(false);
   const [editing, setEditing] = useState(false);
@@ -213,6 +267,14 @@ export function ChatMessage({
         <span>TIVO Agent</span>
       </div>
       {msg.cognition && shouldSurface(msg.cognition) && <CognitionTrace d={msg.cognition} />}
+      {msg.plan && (
+        <PlanCard
+          plan={msg.plan}
+          progress={msg.progress}
+          onApprove={() => onApprovePlan?.(msg.id)}
+          onCancel={() => onCancelPlan?.(msg.id)}
+        />
+      )}
       <div className="text-sm leading-relaxed text-zinc-100">
         {msg.content ? (
           <div className="prose prose-invert prose-sm max-w-none prose-code:text-amber-300 prose-headings:text-zinc-100 prose-a:text-amber-400 prose-p:my-2">
